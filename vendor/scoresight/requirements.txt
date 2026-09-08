@@ -1,0 +1,14 @@
+cyndilib
+fastapi
+numpy==1.26.4
+obsws-python
+opencv-python==4.10.0.84
+pillow
+platformdirs
+pyinstaller==6.10.0
+pyside6==6.7.3
+python-dotenv
+requests
+tesserocr
+uvicorn
+websockets==9.1

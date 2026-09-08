@@ -1,0 +1,3 @@
+# Preserve upstream source bytes and do not lint its historical whitespace.
+vendor/** -text -whitespace linguist-vendored
+*.traineddata binary

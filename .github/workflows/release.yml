@@ -1,0 +1,58 @@
+name: Native build and release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows-x64
+          - os: macos-15
+            name: macOS-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install native dependencies
+        run: python -m pip install ".[dev]"
+      - name: Unit and integration tests
+        run: python -m pytest -q
+      - name: Native application and embedded OCR smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python scripts/build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LiKeWatch-${{ matrix.name }}
+          path: |
+            dist/LiKeWatch-0.1-*.exe
+            dist/LiKeWatch-0.1-*.dmg
+            dist/*.sha256
+            dist/native-smoke.json
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/*.exe artifacts/*.dmg artifacts/*.sha256 --verify-tag --title "LiKeWatch $GITHUB_REF_NAME" --notes-file docs/RELEASE-v0.1.md
