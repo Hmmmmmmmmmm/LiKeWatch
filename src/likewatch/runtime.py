@@ -9,7 +9,8 @@ from .ocr import OcrSupervisor
 from .rules import RuleState, describe, evaluate
 from .diagnostics import logger
 from .domain import Observation, Quality
-from .messaging import deliver
+from .messaging import deliver, poll_acknowledgements
+from .snapshots import incident_snapshot, rule_variables
 
 
 class MonitorWorker(QThread):
@@ -129,17 +130,22 @@ class MonitorWorker(QThread):
                                 )
                                 if event:
                                     kind, incident = event
-                                    values = " | ".join(
-                                        f"{r.name}: {observations[r.id].value} {r.unit} ({observations[r.id].quality})"
-                                        for r in profile.regions
+                                    ids = rule_variables(rule.condition)
+                                    selected = [r for r in profile.regions if r.id in ids]
+                                    values = "\n".join(
+                                        f"{r.name}: {observations[r.id].value if observations[r.id].current(timestamp, profile.freshness) else 'unavailable'} {r.unit}"
+                                        for r in selected
                                     )
+                                    attachment = None
+                                    if profile.attach_snapshot and profile.delivery_enabled and kind in profile.routes:
+                                        try:
+                                            attachment = incident_snapshot(frame, [r for r in selected if r in eligible])
+                                        except Exception:
+                                            logger.warning("Incident snapshot unavailable; sending text alert")
                                     self.store.enqueue(
-                                        profile,
-                                        kind,
-                                        f"{rule.name}\nCondition: {describe(rule.condition, {r.id: r for r in profile.regions})}\n{values}\nSource: {profile.source}",
-                                        incident,
-                                        rule,
-                                        now=timestamp,
+                                        profile, kind,
+                                        f"Rule: {rule.name} ({describe(rule.condition, {r.id: r for r in profile.regions})})\n{values}",
+                                        incident, rule, now=timestamp, attachment=attachment,
                                     )
                             self.states = {
                                 k: v for k, v in self.states.items() if k[2] == revision
@@ -192,18 +198,34 @@ class MonitorWorker(QThread):
 
 class DeliveryWorker(QThread):
     changed = Signal()
+    warning = Signal(str)
 
     def __init__(self, store):
         super().__init__()
         self.store = store
         self.profile_id = None
+        self.profile = None
+        self.last_poll = 0
+        self.poll_warning = 0
+        self.last_notify = 0
         self.stopping = threading.Event()
 
     def run(self):
-        while not self.stopping.wait(1):
+        while not self.stopping.wait(0.1):
             if self.profile_id:
                 try:
                     deliver(self.store, self.profile_id)
-                    self.changed.emit()
+                    profile = self.profile
+                    if profile and profile.id == self.profile_id and self.store.has_ack_targets(profile.id) and time.monotonic() - self.last_poll >= profile.interval:
+                        self.last_poll = time.monotonic()
+                        try:
+                            poll_acknowledgements(self.store, profile)
+                        except Exception:
+                            if time.monotonic() - self.poll_warning > 60:
+                                self.warning.emit("Telegram reply polling unavailable; check connection, bot webhook, or another poller")
+                                self.poll_warning = time.monotonic()
+                    if time.monotonic() - self.last_notify >= 1:
+                        self.last_notify = time.monotonic()
+                        self.changed.emit()
                 except Exception:
                     logger.exception("Delivery worker failed")

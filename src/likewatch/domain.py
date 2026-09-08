@@ -111,8 +111,10 @@ class Profile:
     chat_id: str = ""
     topic_id: str = ""
     delivery_enabled: bool = False
+    attach_snapshot: bool = False
+    local_alarm: bool = False
     data_interval: int = 0
-    routes: list[str] = field(default_factory=lambda: ["ALERT", "RECOVERY", "TEST"])
+    routes: list[str] = field(default_factory=lambda: ["ALERT", "RECOVERY"])
 
     def source_key(self):
         return f"{self.source}:{self.device}:{self.image_path if self.source == 'image' else ''}"

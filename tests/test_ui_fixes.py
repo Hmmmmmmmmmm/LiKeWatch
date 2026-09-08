@@ -313,3 +313,56 @@ def test_macos_tree_and_dropdown_use_summary(window, app):
         tree.clear()
         app.processEvents()
         assert interface.childCount() == 0
+
+
+def test_settings_autosave_and_new_controls(window,app):
+    from likewatch.profiles import load
+    window.open_settings()
+    editor=window.pages.currentWidget()
+    editor.attach.setChecked(True)
+    # Avoid real alarms in tests.
+    editor.chat.setText('test-chat')
+    wait(app,lambda: window.profile.attach_snapshot)
+    stored=load(window.data_dir/'last-profile.json')
+    assert stored.attach_snapshot and stored.chat_id=='test-chat'
+    assert 'TEST' not in editor.route_boxes
+    assert not editor.revealed_token.isVisible()
+    assert not window.age_timer.isActive()
+    editor.reject()
+    wait(app,lambda:window.pages.currentWidget() is window.splitter)
+
+
+def test_local_alarm_acknowledges_and_stops(window,monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    sounds=[]
+    monkeypatch.setattr(QApplication,'beep',lambda:sounds.append(True))
+    window.profile.local_alarm=True
+    window.store.enqueue(window.profile,'ALERT','test',incident='test-alarm',rule=window.profile.rules[0])
+    window.alarm_tick()
+    assert sounds and window.ack_button.styleSheet()
+    window.acknowledge()
+    assert not window.store.pending_alarms(window.profile.id)
+    assert not window.ack_button.styleSheet()
+
+
+@pytest.mark.parametrize('volume,level',[(9,'WARNING'),(10,'INFO')])
+def test_monitor_logs_alarm_volume(window,monkeypatch,volume,level):
+    monkeypatch.setattr('likewatch.alarm.output_volume',lambda:volume)
+    window.profile.local_alarm=True
+    window.toggle()
+    window.toggle()
+    assert f'{level}  Alarm output volume: {volume}%' in window.logs.toPlainText()
+
+
+def test_snapshot_failure_does_not_lose_incident(window,app,monkeypatch):
+    def broken(*_):
+        raise RuntimeError('render failed')
+    monkeypatch.setattr('likewatch.runtime.incident_snapshot',broken)
+    window.profile.attach_snapshot=True
+    window.profile.delivery_enabled=True
+    window.profile.chat_id='test-only'
+    window.profile.rules[0].confirm=1
+    window.toggle()
+    wait(app,lambda: bool(window.store.active(window.profile.id)))
+    window.toggle()
+    assert window.store.history(window.profile.id)[0]['kind']=='ALERT'

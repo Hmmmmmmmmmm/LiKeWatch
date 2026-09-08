@@ -9,6 +9,8 @@ import re
 import sys
 import threading
 import tempfile
+import time
+from datetime import datetime
 from platformdirs import user_log_dir
 
 logger = logging.getLogger("likewatch")
@@ -20,6 +22,31 @@ class RedactedFormatter(logging.Formatter):
         text = super().format(record)
         text = re.sub(r"bot\d+:[A-Za-z0-9_-]+", "bot[REDACTED]", text)
         return re.sub(r"(?i)(token[=:]\s*)\S+", r"\1[REDACTED]", text)
+
+
+def prune_logs(directory, days=7):
+    """Remove only this app's old logs; trim dated records in mixed-age files."""
+    cutoff = time.time() - days * 86400
+    for path in Path(directory).iterdir():
+        if not (path.name.startswith("application.log") or
+                (path.name.startswith("native-") and path.suffix == ".log")):
+            continue
+        if not path.is_file():
+            continue
+        if path.stat().st_mtime < cutoff:
+            path.unlink()
+        elif path.name.startswith("application.log"):
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines(True)
+            keep, current = [], True
+            for line in lines:
+                try:
+                    current = datetime.strptime(line[:23], "%Y-%m-%d %H:%M:%S,%f").timestamp() >= cutoff
+                except ValueError:
+                    pass
+                if current:
+                    keep.append(line)
+            if len(keep) != len(lines):
+                path.write_text(''.join(keep), encoding="utf-8")
 
 
 def initialize(directory=None):
@@ -35,6 +62,11 @@ def initialize(directory=None):
         directory = Path(tempfile.gettempdir()) / "LiKeWatch-logs"
         directory.mkdir(parents=True, exist_ok=True)
     if not logger.handlers:
+        if __import__('multiprocessing').current_process().name == 'MainProcess':
+            try:
+                prune_logs(directory)
+            except OSError:
+                pass
         handler = RotatingFileHandler(
             directory / "application.log",
             maxBytes=2_000_000,
