@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
 from platformdirs import user_data_dir
 from .domain import Region, Rule, Quality
 from .profiles import demo_profile, load, save, validate
-from .rules import evaluate, explain
+from .rules import evaluate, explain, validate_tree
 from .imaging import validate_corners, rectify, preprocess
 from .capture import demo_frame, screen_permission
 from .diagnostics import logger
@@ -358,32 +358,53 @@ class ConditionEditor(QWidget):
         for region in self.regions:
             variable.addItem(region.name, region.id)
         op = QComboBox()
-        op.addItems([">", ">=", "<", "<=", "==", "!="])
         value = QLineEdit("0")
         if node:
             variable.setCurrentIndex(variable.findData(node["variable"]))
-            op.setCurrentText(node["op"])
             value.setText(node["value"])
+        def update_operators():
+            previous = op.currentData()
+            region = next(r for r in self.regions if r.id == variable.currentData())
+            operators = ["==", "!=", "contains"] if region.kind == "text" else [">", ">=", "<", "<=", "==", "!="]
+            op.clear()
+            for operator in operators:
+                op.addItem("Text contains" if operator == "contains" else operator, operator)
+            if previous in operators:
+                op.setCurrentIndex(op.findData(previous))
+            value.setToolTip("Literal, case-sensitive text; digits are treated as text." if region.kind == "text" else "A finite numeric threshold.")
+
+        variable.currentIndexChanged.connect(update_operators)
+        update_operators()
+        if node and op.findData(node["op"]) >= 0:
+            op.setCurrentIndex(op.findData(node["op"]))
+        dialog.variable, dialog.operator, dialog.threshold = variable, op, value
         layout.addRow("Variable", variable)
         layout.addRow("Operator", op)
         layout.addRow("Value", value)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.accepted.connect(dialog.accept)
+        error = QLabel()
+        error.setWordWrap(True)
+        layout.addRow(error)
+        dialog.validation_error = error
+
+        def comparison():
+            return {"variable": variable.currentData(), "op": op.currentData(), "value": value.text()}
+
+        def check():
+            try:
+                validate_tree(comparison(), {r.id: r for r in self.regions})
+            except ValueError as exc:
+                error.setText(str(exc))
+                return
+            dialog.accept()
+
+        buttons.accepted.connect(check)
         buttons.rejected.connect(dialog.reject)
         layout.addRow(buttons)
-        present(
-            self,
-            dialog,
-            lambda: accepted(
-                {
-                    "variable": variable.currentData(),
-                    "op": op.currentText(),
-                    "value": value.text(),
-                }
-            ),
-        )
+        dialog.check = check
+        present(self, dialog, lambda: accepted(comparison()))
 
     def add_leaf(self):
         parent = self.parent_group()
@@ -602,6 +623,9 @@ class SettingsDialog(QDialog):
 
 class MainWindow(QMainWindow):
     def __init__(self, data_dir=None):
+        from .accessibility import install_table_workaround
+
+        install_table_workaround()
         super().__init__()
         self.setWindowTitle("LiKeWatch · local OCR monitor")
         self.resize(1500, 930)

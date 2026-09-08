@@ -167,3 +167,26 @@ def test_active_incident_survives_restart(tmp_path):
     store.enqueue(p, "ALERT", "Hot", "incident", p.rules[0])
     restored = Store(tmp_path / "db").active(p.id)
     assert restored == {p.rules[0].id: "incident"}
+
+
+def test_text_contains_is_literal_case_sensitive_and_quality_gated():
+    from likewatch.domain import Region, parse_observation
+    from likewatch.rules import Truth, evaluate, validate_tree
+    import pytest
+
+    region = Region('status', [[0, 0], [1, 0], [1, 1], [0, 1]], kind='text')
+    node = {'variable': region.id, 'op': 'contains', 'value': '14'}
+    validate_tree(node, {region.id: region})
+    obs = parse_observation(region, 'Step 14 ready', 99, 100, 1)
+    assert evaluate(node, {region.id: obs}, 100, 5) == Truth.TRUE
+    node['value'] = 'Ready'
+    assert evaluate(node, {region.id: obs}, 100, 5) == Truth.FALSE
+    assert evaluate(node, {region.id: obs}, 110, 5) == Truth.UNKNOWN
+    assert evaluate(node, {}, 100, 5) == Truth.UNKNOWN
+    node['value'] = ''
+    with pytest.raises(ValueError):
+        validate_tree(node, {region.id: region})
+    node['value'] = '14'
+    region.kind = 'number'
+    with pytest.raises(ValueError):
+        validate_tree(node, {region.id: region})

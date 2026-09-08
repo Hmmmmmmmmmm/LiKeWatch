@@ -1,14 +1,15 @@
 """Avoid Qt Cocoa's synthesized table cells on macOS 27.
 
 The native bridge can retain stale table-cell pointers while accessibility clients
-read a changing table. Expose a text summary instead on affected macOS versions;
+read a changing table, tree, or dropdown list. Expose a text summary instead on affected macOS versions;
 visual table behavior and keyboard selection remain available.
 """
 import platform
 import sys
 
 from PySide6.QtGui import QAccessible
-from PySide6.QtWidgets import QAccessibleWidget
+from PySide6.QtWidgets import QAccessibleWidget, QAbstractItemView
+from PySide6.QtCore import QModelIndex
 
 _installed = False
 
@@ -25,17 +26,27 @@ class TableSummary(QAccessibleWidget):
 
     def text(self, kind):
         if kind in (QAccessible.Text.Name, QAccessible.Text.Value):
-            table = self.object()
+            model = self.object().model()
             rows = []
-            for row in range(table.rowCount()):
-                cells = [table.item(row, col) for col in range(table.columnCount())]
-                rows.append(", ".join(item.text() for item in cells if item is not None))
+
+            def visit(parent=QModelIndex(), depth=0):
+                if model is None or depth > 16:
+                    return
+                for row in range(model.rowCount(parent)):
+                    if len(rows) >= 256:
+                        return
+                    cells = [model.index(row, col, parent).data()
+                             for col in range(model.columnCount(parent))]
+                    rows.append(", ".join(str(cell) for cell in cells if cell is not None))
+                    visit(model.index(row, 0, parent), depth + 1)
+
+            visit()
             return "\n".join(rows) or "Empty table"
         return super().text(kind)
 
 
 def _factory(name, obj):
-    if getattr(obj, "_likewatch_table_summary", False):
+    if isinstance(obj, QAbstractItemView):
         return TableSummary(obj)
     return None
 

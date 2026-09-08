@@ -20,6 +20,7 @@ OPS = {
     "<=": operator.le,
     "==": operator.eq,
     "!=": operator.ne,
+    "contains": lambda text, fragment: fragment in text,
 }
 
 
@@ -46,14 +47,18 @@ def validate_tree(node, regions, depth=0, budget=None):
         if not isinstance(value, str) or len(value) > 128:
             raise ValueError("Comparison value must be a short string")
         if region.kind == "number":
+            if node["op"] == "contains":
+                raise ValueError("Text contains requires a text variable")
             try:
                 number = Decimal(value)
                 if not number.is_finite() or abs(number.adjusted()) > 1000:
                     raise ValueError("A finite numeric threshold is required")
             except InvalidOperation as error:
                 raise ValueError("Invalid numeric threshold") from error
-        elif node["op"] not in ("==", "!="):
-            raise ValueError("Text variables support == and !=")
+        elif node["op"] not in ("==", "!=", "contains"):
+            raise ValueError("Text variables support ==, !=, and text contains")
+        if node["op"] == "contains" and not value:
+            raise ValueError("Enter non-empty text to search for")
 
 
 def evaluate(node, observations, now, freshness):

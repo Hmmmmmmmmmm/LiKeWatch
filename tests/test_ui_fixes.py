@@ -252,3 +252,64 @@ def test_macos_accessibility_summary_has_no_native_cells(app):
         app.processEvents()
         assert interface.childCount() == 0
         assert isinstance(interface.text(QAccessible.Text.Name), str)
+
+
+def test_comparison_operators_follow_variable_type(window, app):
+    from likewatch.ui import ConditionEditor
+
+    window.profile.rules = []
+    window.profile.regions[0].kind = 'text'
+    editor = ConditionEditor(window.profile.regions)
+    # Host through the real stacked-page route, including nested comparison pages.
+    from PySide6.QtWidgets import QDialog, QVBoxLayout
+    host = QDialog(window)
+    QVBoxLayout(host).addWidget(editor)
+    window.present_editor(host)
+    accepted = []
+    editor.leaf_dialog(accepted.append)
+    dialog = window.pages.currentWidget()
+    ops = lambda: [dialog.operator.itemData(i) for i in range(dialog.operator.count())]
+    assert ops() == ['==', '!=', 'contains']
+    dialog.operator.setCurrentIndex(dialog.operator.findData('contains'))
+    dialog.threshold.setText('')
+    dialog.check()
+    assert 'non-empty' in dialog.validation_error.text()
+    assert window.pages.currentWidget() is dialog
+    dialog.variable.setCurrentIndex(1)
+    assert 'contains' not in ops()
+    dialog.threshold.setText('not a number')
+    dialog.check()
+    assert 'numeric' in dialog.validation_error.text()
+    dialog.variable.setCurrentIndex(0)
+    dialog.operator.setCurrentIndex(dialog.operator.findData('contains'))
+    dialog.threshold.setText('14')
+    dialog.check()
+    wait(app, lambda: bool(accepted))
+    assert accepted[0]['op'] == 'contains' and accepted[0]['value'] == '14'
+    host.reject()
+    wait(app, lambda: window.pages.currentWidget() is window.splitter)
+
+
+def test_macos_tree_and_dropdown_use_summary(window, app):
+    from likewatch.accessibility import install_table_workaround, TableSummary
+    from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QComboBox
+    from PySide6.QtGui import QAccessible
+
+    if not install_table_workaround():
+        pytest.skip('macOS 27 workaround')
+    tree = QTreeWidget()
+    tree.setColumnCount(3)
+    combo = QComboBox()
+    combo.addItems(['Text contains', '=='])
+    for view in (tree, combo.view()):
+        interface = QAccessible.queryAccessibleInterface(view)
+        assert isinstance(interface, TableSummary)
+        assert interface.childCount() == 0
+    interface = QAccessible.queryAccessibleInterface(tree)
+    for _ in range(30):
+        parent = QTreeWidgetItem(tree, ['AND'])
+        child = QTreeWidgetItem(parent, ['Text variable', 'contains', '14'])
+        assert 'contains' in interface.text(QAccessible.Text.Name)
+        tree.clear()
+        app.processEvents()
+        assert interface.childCount() == 0
