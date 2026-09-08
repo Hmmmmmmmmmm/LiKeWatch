@@ -11,6 +11,9 @@ import sys
 root = Path(__file__).resolve().parents[1]
 os.environ.setdefault("PYINSTALLER_CONFIG_DIR", str(root / "build/pyinstaller-cache"))
 from licenses import collect
+from likewatch import __version__
+
+dist = Path(os.environ.get("LIKEWATCH_BUILD_DIR", str(root / "dist"))).resolve()
 
 collect(root)
 subprocess.run(
@@ -20,17 +23,24 @@ subprocess.run(
         "PyInstaller",
         "--clean",
         "--noconfirm",
+        "--distpath",
+        str(dist),
         str(root / "LiKeWatch.spec"),
     ],
     cwd=root,
     check=True,
 )
-dist = root / "dist"
 if sys.platform == "darwin":
     app = dist / "LiKeWatch.app"
     executable = app / "Contents/MacOS/LiKeWatch"
     subprocess.run(
-        [str(executable), "--self-test", "--report", str(dist / "native-smoke.json")],
+        [
+            str(executable),
+            "--self-test",
+            "--ui-stress",
+            "--report",
+            str(dist / "native-smoke.json"),
+        ],
         check=True,
         timeout=120,
     )
@@ -43,13 +53,13 @@ if sys.platform == "darwin":
     if not link.exists():
         link.symlink_to("/Applications")
     shutil.copy2(root / "docs/INSTALL.md", staging / "INSTALL.txt")
-    artifact = dist / f"LiKeWatch-0.1-macOS-{platform.machine()}.dmg"
+    artifact = dist / f"LiKeWatch-{__version__}-macOS-{platform.machine()}.dmg"
     subprocess.run(
         [
             "hdiutil",
             "create",
             "-volname",
-            "LiKeWatch 0.1",
+            f"LiKeWatch {__version__}",
             "-srcfolder",
             str(staging),
             "-ov",
@@ -62,11 +72,17 @@ if sys.platform == "darwin":
 else:
     executable = dist / "LiKeWatch.exe"
     subprocess.run(
-        [str(executable), "--self-test", "--report", str(dist / "native-smoke.json")],
+        [
+            str(executable),
+            "--self-test",
+            "--ui-stress",
+            "--report",
+            str(dist / "native-smoke.json"),
+        ],
         check=True,
         timeout=180,
     )
-    artifact = dist / "LiKeWatch-0.1-Windows-x64-portable.exe"
+    artifact = dist / f"LiKeWatch-{__version__}-Windows-x64-portable.exe"
     executable.rename(artifact)
 checksum = hashlib.sha256(artifact.read_bytes()).hexdigest()
 (dist / (artifact.name + ".sha256")).write_text(f"{checksum}  {artifact.name}\n")

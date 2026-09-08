@@ -5,10 +5,19 @@ import time
 from pathlib import Path
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, Signal, QTimer, QPointF, QSettings, QLockFile
-from PySide6.QtGui import QImage, QPixmap, QPen, QColor, QPainter, QPolygonF
+from PySide6.QtCore import Qt, Signal, QTimer, QPointF, QSettings, QLockFile, QUrl
+from PySide6.QtGui import (
+    QImage,
+    QPixmap,
+    QPen,
+    QColor,
+    QPainter,
+    QPolygonF,
+    QDesktopServices,
+)
 from PySide6.QtWidgets import (
     QMainWindow,
+    QStackedWidget,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -22,8 +31,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QMessageBox,
-    QFileDialog,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -36,17 +43,39 @@ from PySide6.QtWidgets import (
     QGraphicsEllipseItem,
     QAbstractItemView,
     QGroupBox,
-    QInputDialog,
 )
 from platformdirs import user_data_dir
 from .domain import Region, Rule, Quality
 from .profiles import demo_profile, load, save, validate
 from .rules import evaluate, explain
 from .imaging import validate_corners, rectify, preprocess
-from .capture import demo_frame
+from .capture import demo_frame, screen_permission
+from .diagnostics import logger
+from .editors import present, notice, confirm, choose_file
+from .magnifier import Magnifier
 from .storage import Store
 from .runtime import MonitorWorker, DeliveryWorker
 from .messaging import save_token
+
+
+class StableTable(QTableWidget):
+    def setItem(self, row, column, item):
+        current = self.item(row, column)
+        if current is None:
+            super().setItem(row, column, item)
+        else:
+            if current.text() != item.text():
+                current.setText(item.text())
+            if current.toolTip() != item.toolTip():
+                current.setToolTip(item.toolTip())
+
+    def setRowCount(self, count):
+        if count != self.rowCount():
+            blocked = self.blockSignals(True)
+            try:
+                super().setRowCount(count)
+            finally:
+                self.blockSignals(blocked)
 
 
 def pixmap(frame):
@@ -100,7 +129,7 @@ class Handle(QGraphicsEllipseItem):
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
-        self.callback()
+        QTimer.singleShot(0, self.callback)
 
 
 class ImageView(QGraphicsView):
@@ -121,9 +150,12 @@ class ImageView(QGraphicsView):
         self.points = []
         self.handles = []
         self.setMinimumSize(320, 300)
+        self.setMouseTracking(True)
+        self.loupe = Magnifier(self)
 
     def show_frame(self, frame, regions, selected=None, fit=False):
         self.frame, self.regions, self.selected_id = frame, regions, selected
+        self.loupe.hide()
         self.scene().clear()
         self.handles = []
         self.scene().addPixmap(pixmap(frame))
@@ -149,6 +181,8 @@ class ImageView(QGraphicsView):
             self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def handle_changed(self, region_id):
+        if not self.editable or region_id != self.selected_id or len(self.handles) != 4:
+            return
         h, w = self.frame.shape[:2]
         corners = [
             [handle.pos().x() / (w - 1), handle.pos().y() / (h - 1)]
@@ -180,6 +214,22 @@ class ImageView(QGraphicsView):
         if item and item.data(0):
             self.selected.emit(item.data(0))
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        if self.picking or (
+            self.editable and event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            self.loupe.show_at(self.mapToScene(event.position().toPoint()))
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if not self.picking:
+            self.loupe.hide()
+
+    def leaveEvent(self, event):
+        self.loupe.hide()
+        super().leaveEvent(event)
 
     def wheelEvent(self, event):
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
@@ -289,9 +339,9 @@ class ConditionEditor(QWidget):
             item = item.parent()
         return item
 
-    def leaf_dialog(self, node=None):
+    def leaf_dialog(self, accepted, node=None):
         if not self.regions:
-            return None
+            return
         dialog = QDialog(self)
         dialog.setWindowTitle("Comparison")
         layout = QFormLayout(dialog)
@@ -314,29 +364,53 @@ class ConditionEditor(QWidget):
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addRow(buttons)
-        if dialog.exec():
-            return {
-                "variable": variable.currentData(),
-                "op": op.currentText(),
-                "value": value.text(),
-            }
+        present(
+            self,
+            dialog,
+            lambda: accepted(
+                {
+                    "variable": variable.currentData(),
+                    "op": op.currentText(),
+                    "value": value.text(),
+                }
+            ),
+        )
 
     def add_leaf(self):
-        node = self.leaf_dialog()
-        if node:
-            self.add_node(node, self.parent_group())
+        parent = self.parent_group()
+
+        def accepted(node):
+            self.add_node(node, parent)
             self.tree.expandAll()
 
+        self.leaf_dialog(accepted)
+
     def add_group(self):
-        choice, ok = QInputDialog.getItem(
-            self, "Group", "Combine children using", ["AND", "OR"], 0, False
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Group")
+        layout = QFormLayout(dialog)
+        choice = QComboBox()
+        choice.addItems(["AND", "OR"])
+        layout.addRow("Combine children using", choice)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        if ok:
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        parent = self.parent_group()
+
+        def accepted():
             self.add_node(
-                {"group": "ALL" if choice == "AND" else "ANY", "children": []},
-                self.parent_group(),
+                {
+                    "group": "ALL" if choice.currentText() == "AND" else "ANY",
+                    "children": [],
+                },
+                parent,
             )
             self.tree.expandAll()
+
+        present(self, dialog, accepted)
 
     def edit(self):
         item = self.tree.currentItem()
@@ -348,12 +422,19 @@ class ConditionEditor(QWidget):
             item.setData(0, Qt.ItemDataRole.UserRole, node)
             item.setText(0, "AND — all" if node["group"] == "ALL" else "OR — any")
         else:
-            replacement = self.leaf_dialog(node)
-            if replacement:
-                parent = item.parent()
-                index = parent.indexOfChild(item)
-                parent.takeChild(index)
-                self.add_node(replacement, parent)
+
+            def accepted(replacement):
+                item.setData(0, Qt.ItemDataRole.UserRole, replacement)
+                item.setText(
+                    0,
+                    next(
+                        r.name for r in self.regions if r.id == replacement["variable"]
+                    ),
+                )
+                item.setText(1, replacement["op"])
+                item.setText(2, replacement["value"])
+
+            self.leaf_dialog(accepted, node)
 
     def remove(self):
         item = self.tree.currentItem()
@@ -421,7 +502,8 @@ class RuleDialog(QDialog):
             validate(candidate)
             self.accept()
         except Exception as error:
-            QMessageBox.warning(self, "Invalid condition", str(error))
+            logger.exception("UI operation failed")
+            notice(self, "Invalid condition", str(error))
 
 
 class SettingsDialog(QDialog):
@@ -489,9 +571,10 @@ class SettingsDialog(QDialog):
             save_token(p.id, self.token.text())
             self.accept()
         except ValueError as error:
-            QMessageBox.warning(self, "Invalid settings", str(error))
+            notice(self, "Invalid settings", str(error))
         except Exception as error:
-            QMessageBox.warning(
+            logger.exception("UI operation failed")
+            notice(
                 self,
                 "Settings not saved",
                 f"{type(error).__name__}: check settings or OS credential store",
@@ -516,6 +599,9 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self.frame = demo_frame() if self.profile.source == "demo" else None
+        self.is_still = self.frame is not None
+        self.frame_timestamp = time.time()
+        self.review_mode = False
         self.observations = {}
         self.previews = {}
         self.selected_id = None
@@ -526,6 +612,7 @@ class MainWindow(QMainWindow):
         self.worker = MonitorWorker(self.store)
         self.delivery = DeliveryWorker(self.store)
         self.worker.result.connect(self.received)
+        self.worker.captured.connect(self.snapshot_received)
         self.worker.error.connect(self.failed)
         self.worker.history.connect(self.show_history)
         self.delivery.changed.connect(self.refresh_history)
@@ -533,13 +620,14 @@ class MainWindow(QMainWindow):
         self.worker.start()
         self.delivery.start()
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.snapshot)
+        self.timer.timeout.connect(self.monitor_tick)
         self.age_timer = QTimer(self)
         self.age_timer.timeout.connect(self.update_values)
         self.age_timer.start(500)
         self.refresh_regions()
         self.refresh_rules()
-        self.log("INFO", "Ready. Demo uses real local OCR. Select Snapshot to analyze.")
+        self.update_controls()
+        self.log("INFO", "Ready. Take a Snapshot, then Trigger OCR on the still image.")
         self.worker.submit(
             (self.revision, copy.deepcopy(self.profile), "history", None)
         )
@@ -567,17 +655,25 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(button("Snapshot", self.snapshot))
         self.start_button = button("Start monitoring", self.toggle)
         toolbar.addWidget(self.start_button)
-        toolbar.addWidget(button("+ Region", self.add_region))
+        self.add_region_button = button("+ Region", self.add_region)
+        toolbar.addWidget(self.add_region_button)
         toolbar.addWidget(button("Save profile", self.save_profile))
         toolbar.addWidget(button("Load profile", self.load_profile))
         toolbar.addWidget(button("Settings", self.open_settings))
+        self.toolbar_controls = [
+            toolbar.itemAt(i).widget()
+            for i in range(toolbar.count())
+            if toolbar.itemAt(i).widget()
+        ]
         outer.addLayout(toolbar)
         self.banner = QLabel(
             "Paused · four corners are stored in source-image coordinates"
         )
         outer.addWidget(self.banner)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        outer.addWidget(self.splitter, 1)
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self.splitter)
+        outer.addWidget(self.pages, 1)
         left, ll = group("01  ANALYZED IMAGE")
         self.image = ImageView()
         ll.addWidget(self.image, 1)
@@ -594,9 +690,15 @@ class MainWindow(QMainWindow):
                 ),
             )
         )
-        self.image.corners_chosen.connect(self.region_chosen)
-        self.image.corners_edited.connect(self.region_edited)
-        self.image.selected.connect(self.select_region)
+        self.image.corners_chosen.connect(
+            self.region_chosen, Qt.ConnectionType.QueuedConnection
+        )
+        self.image.corners_edited.connect(
+            self.region_edited, Qt.ConnectionType.QueuedConnection
+        )
+        self.image.selected.connect(
+            self.select_region, Qt.ConnectionType.QueuedConnection
+        )
         self.splitter.addWidget(left)
         middle, ml = group("02  REGIONS & VARIABLES")
         previews = QHBoxLayout()
@@ -608,10 +710,12 @@ class MainWindow(QMainWindow):
             label.setStyleSheet("background:#e2e8f0; color:#334155; border-radius:6px;")
             previews.addWidget(label)
         ml.addLayout(previews)
+        self.ocr_button = button("Trigger OCR on still image", self.trigger_ocr)
+        ml.addWidget(self.ocr_button)
         self.preprocessed = QCheckBox("Show final OCR input")
         self.preprocessed.toggled.connect(self.update_preview)
         ml.addWidget(self.preprocessed)
-        self.variables = QTableWidget(0, 7)
+        self.variables = StableTable(0, 7)
         self.variables.setHorizontalHeaderLabels(
             ["Variable", "Value", "Unit", "Raw OCR", "Confidence", "Quality", "Age"]
         )
@@ -625,12 +729,14 @@ class MainWindow(QMainWindow):
         self.variables.itemSelectionChanged.connect(self.table_selected)
         ml.addWidget(self.variables, 1)
         row = QHBoxLayout()
-        row.addWidget(button("Edit variable", self.edit_region))
-        row.addWidget(button("Remove", self.remove_region))
+        self.edit_region_button = button("Edit variable", self.edit_region)
+        row.addWidget(self.edit_region_button)
+        self.remove_region_button = button("Remove", self.remove_region)
+        row.addWidget(self.remove_region_button)
         ml.addLayout(row)
         self.splitter.addWidget(middle)
         right, rl = group("03  CONDITIONS & ALERTS")
-        self.rule_list = QTableWidget(0, 3)
+        self.rule_list = StableTable(0, 3)
         self.rule_list.setHorizontalHeaderLabels(["Rule", "State", "Result"])
         self.rule_list.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
@@ -647,7 +753,7 @@ class MainWindow(QMainWindow):
         row.addWidget(button("Remove", self.remove_rule))
         rl.addLayout(row)
         rl.addWidget(QLabel("Incidents and delivery · latest 100 events"))
-        self.events = QTableWidget(0, 4)
+        self.events = StableTable(0, 4)
         self.events.setHorizontalHeaderLabels(
             ["Time / event", "Kind", "Delivery", "Ack"]
         )
@@ -673,6 +779,7 @@ class MainWindow(QMainWindow):
         logbar.addWidget(self.pause_log)
         logbar.addStretch()
         logbar.addWidget(button("Export logs", self.export_logs))
+        logbar.addWidget(button("Open error logs", self.open_error_logs))
         outer.addLayout(logbar)
         self.logs = QPlainTextEdit()
         self.logs.setReadOnly(True)
@@ -684,6 +791,7 @@ class MainWindow(QMainWindow):
         )
 
     def log(self, level, message):
+        logger.log(40 if level == "ERROR" else 20, message)
         if self.log_filter.currentText() not in ("All", level):
             return
         bar = self.logs.verticalScrollBar()
@@ -696,6 +804,84 @@ class MainWindow(QMainWindow):
         self.timer.stop()
         self.start_button.setText("Start monitoring")
 
+    def freeze_current(self):
+        self.stop()
+        self.revision += 1
+        with self.worker.commit_guard:
+            self.worker.revision = self.revision
+        self.busy = False
+        self.is_still = self.frame is not None
+        self.image.picking = False
+        self.image.points = []
+        self.image.loupe.hide()
+        self.update_controls()
+
+    def present_editor(self, dialog, accepted=None):
+        self.freeze_current()
+        previous = self.pages.currentWidget()
+        dialog.setWindowFlags(Qt.WindowType.Widget)
+        self.pages.addWidget(dialog)
+        self.pages.setCurrentWidget(dialog)
+        self.update_controls()
+        self.banner.setText(dialog.windowTitle() + " · monitoring paused")
+
+        def finished(code):
+            def settle():
+                if self.pages.currentWidget() is dialog:
+                    self.pages.setCurrentWidget(previous)
+                self.pages.removeWidget(dialog)
+                try:
+                    if code == QDialog.DialogCode.Accepted and accepted:
+                        accepted()
+                finally:
+                    dialog.deleteLater()
+                    self.update_controls()
+
+            QTimer.singleShot(0, settle)
+
+        dialog.finished.connect(finished)
+        dialog.show()
+
+    def update_controls(self):
+        main = self.pages.currentWidget() is self.splitter
+        for control in self.toolbar_controls:
+            control.setEnabled(main)
+        still = (
+            main
+            and self.is_still
+            and self.frame is not None
+            and not self.busy
+            and not self.timer.isActive()
+        )
+        for widget in (
+            self.add_region_button,
+            self.edit_region_button,
+            self.remove_region_button,
+            self.edit_geometry,
+        ):
+            widget.setEnabled(still)
+        self.ocr_button.setEnabled(
+            still and bool(self.profile.regions) and not self.image.picking
+        )
+        self.start_button.setEnabled(main and (not self.busy or self.timer.isActive()))
+        self.image.editable = still and self.edit_geometry.isChecked()
+
+    def can_edit(self):
+        return (
+            self.is_still
+            and self.frame is not None
+            and not self.busy
+            and not self.timer.isActive()
+            and self.pages.currentWidget() is self.splitter
+        )
+
+    def report_error(self, message):
+        self.freeze_current()
+        self.observations = {}
+        self.update_values()
+        self.banner.setText(message)
+        self.log("ERROR", message)
+
     def invalidate(self):
         self.stop()
         self.revision += 1
@@ -706,6 +892,7 @@ class MainWindow(QMainWindow):
         self.previews = {}
         self.update_values()
         self.refresh_rules()
+        self.update_controls()
         self.delivery.profile_id = (
             self.profile.id if self.profile.delivery_enabled else None
         )
@@ -713,26 +900,98 @@ class MainWindow(QMainWindow):
         save(self.profile, self.data_dir / "last-profile.json")
 
     def snapshot(self):
-        if self.busy or self.image.picking or self.edit_geometry.isChecked():
+        if self.pages.currentWidget() is not self.splitter:
+            return
+        self.freeze_current()
+        self.edit_geometry.setChecked(False)
+        if self.profile.source == "screen" and not screen_permission(request=True):
+            self.report_error(
+                "Screen recording permission is required. Enable LiKeWatch in Privacy & Security, then restart the app."
+            )
+            return
+        self.review_mode = False
+        self.busy = self.worker.submit(
+            (self.revision, copy.deepcopy(self.profile), "snapshot", None)
+        )
+        self.update_controls()
+        self.banner.setText(
+            "Taking a snapshot…"
+            if self.busy
+            else "Previous operation is finishing; retry Snapshot shortly."
+        )
+
+    def snapshot_received(self, result):
+        revision, frame, timestamp = result
+        if revision != self.revision:
+            return
+        self.busy = False
+        self.frame = frame
+        self.frame_timestamp = timestamp
+        self.is_still = True
+        self.observations = {}
+        self.previews = {}
+        self.review_mode = False
+        self.image.show_frame(frame, self.profile.regions, self.selected_id, fit=True)
+        self.frame_label.setText(
+            "Still snapshot " + time.strftime("%H:%M:%S", time.localtime(timestamp))
+        )
+        self.banner.setText("Still image ready · select regions, then Trigger OCR")
+        self.update_values()
+        self.update_preview()
+        self.update_controls()
+
+    def trigger_ocr(self):
+        if not self.can_edit() or self.image.picking:
+            return
+        self.edit_geometry.setChecked(False)
+        self.review_mode = True
+        self.busy = self.worker.submit(
+            (
+                self.revision,
+                copy.deepcopy(self.profile),
+                "ocr",
+                (self.frame.copy(), self.frame_timestamp),
+            )
+        )
+        self.update_controls()
+        self.banner.setText(
+            "OCR on the frozen image…"
+            if self.busy
+            else "Worker busy; retry OCR shortly."
+        )
+
+    def monitor_tick(self):
+        if self.busy or not self.timer.isActive():
             return
         self.busy = self.worker.submit(
             (self.revision, copy.deepcopy(self.profile), "capture", None)
         )
-        if self.busy:
-            self.banner.setText("Processing a fresh frame locally…")
+        self.update_controls()
 
     def toggle(self):
         if self.timer.isActive():
-            self.stop()
-            self.banner.setText(
-                "Paused · values expire at the configured freshness limit"
-            )
+            self.freeze_current()
+            self.banner.setText("Paused on a still image · editing enabled")
         else:
-            self.edit_geometry.setChecked(False)
+            if self.profile.source == "screen" and not screen_permission(request=True):
+                self.report_error(
+                    "Enable screen recording permission for LiKeWatch and restart the app."
+                )
+                return
             self.image.picking = False
+            self.image.loupe.hide()
+            self.edit_geometry.setChecked(False)
+            self.is_still = False
+            self.review_mode = False
+            self.image.editable = False
+            if self.frame is not None:
+                self.image.show_frame(
+                    self.frame, self.profile.regions, self.selected_id
+                )
             self.timer.start(int(self.profile.interval * 1000))
-            self.start_button.setText("Pause")
-            self.snapshot()
+            self.start_button.setText("Pause / freeze")
+            self.update_controls()
+            self.monitor_tick()
 
     def received(self, result):
         revision, frame, observations, previews, timestamp, phases = result
@@ -740,6 +999,8 @@ class MainWindow(QMainWindow):
             return
         self.busy = False
         first = self.frame is None
+        self.frame_timestamp = timestamp
+        self.is_still = not self.timer.isActive()
         self.frame = frame
         self.observations = observations
         self.previews = previews
@@ -756,8 +1017,11 @@ class MainWindow(QMainWindow):
                 else "delivery disabled"
             )
         )
+        if self.review_mode:
+            self.banner.setText("Still-image OCR preview · monitoring remains paused")
         self.update_values()
         self.update_preview()
+        self.update_controls()
         for i, rule in enumerate(self.profile.rules):
             phase, truth = phases[rule.id]
             self.rule_list.setItem(i, 1, QTableWidgetItem(phase))
@@ -773,7 +1037,8 @@ class MainWindow(QMainWindow):
         self.busy = False
         self.observations = {}
         self.update_values()
-        self.banner.setText("Acquisition / OCR unavailable · no current readings")
+        self.banner.setText(message)
+        self.update_controls()
         self.log("ERROR", message)
 
     def refresh_regions(self):
@@ -792,13 +1057,15 @@ class MainWindow(QMainWindow):
         self.update_preview()
 
     def update_values(self):
-        now = time.time()
+        if self.pages.currentWidget() is not self.splitter:
+            return
+        now = self.frame_timestamp if self.review_mode else time.time()
         for i, region in enumerate(self.profile.regions):
             obs = self.observations.get(region.id)
             valid = obs and obs.current(now, self.profile.freshness)
             quality = (
                 (
-                    obs.quality.value
+                    obs.quality.value + (" (still)" if self.review_mode else "")
                     if now - obs.timestamp <= self.profile.freshness
                     else "STALE"
                 )
@@ -811,7 +1078,7 @@ class MainWindow(QMainWindow):
                 obs.raw if obs else "",
                 f"{obs.confidence:.0f}%" if obs else "",
                 quality,
-                f"{now - obs.timestamp:.1f}s" if obs else "",
+                f"{time.time() - obs.timestamp:.1f}s" if obs else "",
             ]
             for j, text in enumerate(values, 1):
                 self.variables.setItem(i, j, QTableWidgetItem(text))
@@ -855,27 +1122,32 @@ class MainWindow(QMainWindow):
             self.corrected.setText("Corrected / OCR input")
 
     def geometry_mode(self, enabled):
+        if enabled and not self.can_edit():
+            self.edit_geometry.blockSignals(True)
+            self.edit_geometry.setChecked(False)
+            self.edit_geometry.blockSignals(False)
+            return
         if enabled:
             self.invalidate()
-        self.image.editable = enabled
+        self.image.editable = enabled and self.can_edit()
         if self.frame is not None:
             self.image.show_frame(self.frame, self.profile.regions, self.selected_id)
 
     def add_region(self):
-        if self.frame is None:
-            QMessageBox.information(
-                self, "Capture first", "Take a snapshot before selecting a region."
-            )
+        if not self.can_edit():
             return
         self.edit_geometry.setChecked(False)
         self.invalidate()
         self.image.picking = True
         self.image.points = []
+        self.update_controls()
         self.banner.setText(
-            "Click four corners: top-left → top-right → bottom-right → bottom-left. Start monitoring cancels selection."
+            "Still image: click top-left → top-right → bottom-right → bottom-left. The loupe shows source pixels."
         )
 
     def region_chosen(self, corners):
+        if not self.can_edit():
+            return
         try:
             validate_corners(corners)
             region = Region(f"Variable {len(self.profile.regions) + 1}", corners)
@@ -883,18 +1155,26 @@ class MainWindow(QMainWindow):
             region.source_size = [self.frame.shape[1], self.frame.shape[0]]
             rectify(self.frame, region)
             dialog = RegionDialog(region, self)
-            if dialog.exec():
+
+            def accepted():
                 candidate = copy.deepcopy(self.profile)
                 candidate.regions.append(dialog.value())
                 validate(candidate)
                 self.profile = candidate
                 self.selected_id = region.id
                 self.invalidate()
+                self.refresh_regions()
+
+            present(self, dialog, accepted)
         except Exception as error:
-            QMessageBox.warning(self, "Invalid region", str(error))
+            logger.exception("UI operation failed")
+            logger.exception("Region selection failed")
+            notice(self, "Invalid region", str(error))
         self.refresh_regions()
 
     def region_edited(self, region_id, corners):
+        if not self.can_edit():
+            return
         try:
             validate_corners(corners)
             candidate = copy.deepcopy(self.profile)
@@ -912,41 +1192,44 @@ class MainWindow(QMainWindow):
                 preprocess(corrected, region.preprocessing),
             )
         except Exception as error:
-            QMessageBox.warning(self, "Invalid corners", str(error))
+            logger.exception("UI operation failed")
+            notice(self, "Invalid corners", str(error))
         self.refresh_regions()
 
     def edit_region(self):
+        if not self.can_edit():
+            return
         region = next(
             (r for r in self.profile.regions if r.id == self.selected_id), None
         )
         if not region:
             return
-        self.stop()
         dialog = RegionDialog(region, self)
-        if dialog.exec():
-            try:
-                updated = dialog.value()
-                if self.frame is not None:
-                    updated.source_key = self.profile.source_key()
-                    updated.source_size = [self.frame.shape[1], self.frame.shape[0]]
-                candidate = copy.deepcopy(self.profile)
-                candidate.regions = [
-                    updated if r.id == region.id else r for r in candidate.regions
-                ]
-                validate(candidate)
-                self.profile = candidate
-                self.invalidate()
-                self.refresh_regions()
-            except Exception as error:
-                QMessageBox.warning(self, "Invalid variable", str(error))
+
+        def accepted():
+            updated = dialog.value()
+            updated.source_key = self.profile.source_key()
+            updated.source_size = [self.frame.shape[1], self.frame.shape[0]]
+            candidate = copy.deepcopy(self.profile)
+            candidate.regions = [
+                updated if r.id == region.id else r for r in candidate.regions
+            ]
+            validate(candidate)
+            self.profile = candidate
+            self.invalidate()
+            self.refresh_regions()
+
+        present(self, dialog, accepted)
 
     def remove_region(self):
+        if not self.can_edit():
+            return
         candidate = copy.deepcopy(self.profile)
         candidate.regions = [r for r in candidate.regions if r.id != self.selected_id]
         try:
             validate(candidate)
         except Exception:
-            QMessageBox.warning(
+            notice(
                 self,
                 "Variable is referenced",
                 "Remove or edit rules referencing this variable first.",
@@ -967,7 +1250,6 @@ class MainWindow(QMainWindow):
     def add_rule(self):
         if not self.profile.regions:
             return
-        self.stop()
         dialog = RuleDialog(
             self.profile,
             Rule(
@@ -977,19 +1259,24 @@ class MainWindow(QMainWindow):
             ),
             self,
         )
-        if dialog.exec():
+
+        def accepted():
             self.profile.rules.append(dialog.rule)
             self.invalidate()
+
+        present(self, dialog, accepted)
 
     def edit_rule(self):
         row = self.rule_list.currentRow()
         if not 0 <= row < len(self.profile.rules):
             return
-        self.stop()
         dialog = RuleDialog(self.profile, self.profile.rules[row], self)
-        if dialog.exec():
+
+        def accepted():
             self.profile.rules[row] = dialog.rule
             self.invalidate()
+
+        present(self, dialog, accepted)
 
     def explain_rule(self):
         row = self.rule_list.currentRow()
@@ -1002,7 +1289,7 @@ class MainWindow(QMainWindow):
                 time.time(),
                 self.profile.freshness,
             )
-            QMessageBox.information(self, rule.name, details)
+            notice(self, rule.name, details)
 
     def remove_rule(self):
         row = self.rule_list.currentRow()
@@ -1013,63 +1300,83 @@ class MainWindow(QMainWindow):
     def change_source(self, source):
         self.profile.source = source
         self.frame = None
+        self.is_still = False
+        self.image.frame = None
+        self.image.loupe.hide()
         self.image.scene().clear()
         self.invalidate()
         self.frame_label.setText("Source changed · capture and verify region placement")
 
     def open_image(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Choose image", "", "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)"
-        )
-        if path:
+        def accepted(path):
             self.profile.image_path = path
             self.source.setCurrentText("image")
             self.invalidate()
             self.snapshot()
 
+        choose_file(
+            self,
+            "Choose image",
+            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)",
+            accepted,
+        )
+
     def open_settings(self):
-        self.stop()
         dialog = SettingsDialog(self.profile, self)
-        if dialog.exec():
+
+        def accepted():
+            old_key = self.profile.source_key()
             self.profile = dialog.profile
+            if old_key != self.profile.source_key():
+                self.frame = None
+                self.is_still = False
+                self.image.frame = None
+                self.image.scene().clear()
             self.invalidate()
 
+        present(self, dialog, accepted)
+
     def save_profile(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export profile", "LiKeWatch-profile.json", "JSON (*.json)"
+        def accepted(path):
+            save(self.profile, path)
+            self.log("INFO", "Profile saved without credentials or enabled delivery")
+
+        choose_file(
+            self,
+            "Export profile",
+            "JSON (*.json)",
+            accepted,
+            save=True,
+            suggested="LiKeWatch-profile.json",
         )
-        if path:
-            try:
-                save(self.profile, path)
-                self.log(
-                    "INFO", "Profile saved without credentials or enabled delivery"
-                )
-            except Exception as error:
-                QMessageBox.warning(self, "Save failed", str(error))
 
     def load_profile(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Load profile", "", "JSON (*.json)")
-        if path:
-            try:
-                self.profile = load(path)
-                self.source.blockSignals(True)
-                self.source.setCurrentText(self.profile.source)
-                self.source.blockSignals(False)
-                self.frame = None
-                self.image.scene().clear()
-                self.invalidate()
-                self.refresh_regions()
-                self.refresh_history()
-            except Exception as error:
-                QMessageBox.warning(self, "Load failed", str(error))
+        def accepted(path):
+            self.profile = load(path)
+            self.source.blockSignals(True)
+            self.source.setCurrentText(self.profile.source)
+            self.source.blockSignals(False)
+            self.frame = None
+            self.is_still = False
+            self.image.frame = None
+            self.image.scene().clear()
+            self.invalidate()
+            self.refresh_regions()
+            self.refresh_history()
+
+        choose_file(self, "Load profile", "JSON (*.json)", accepted)
 
     def refresh_history(self):
+        if self.pages.currentWidget() is not self.splitter:
+            return
         if not self.busy:
             self.worker.submit(
                 (self.revision, copy.deepcopy(self.profile), "history", None)
             )
 
     def show_history(self, revision, rows):
+        if self.pages.currentWidget() is not self.splitter:
+            return
         if revision != self.revision:
             return
         self.history_rows = rows
@@ -1099,7 +1406,7 @@ class MainWindow(QMainWindow):
 
     def test_send(self):
         if not self.profile.delivery_enabled or "TEST" not in self.profile.routes:
-            QMessageBox.information(
+            notice(
                 self,
                 "Delivery disabled",
                 "Enable delivery and the TEST route in Settings first.",
@@ -1108,24 +1415,32 @@ class MainWindow(QMainWindow):
         self.worker.submit((self.revision, copy.deepcopy(self.profile), "test", None))
 
     def retry(self):
-        if (
-            QMessageBox.question(
-                self,
-                "Retry delivery",
-                "An uncertain message may already be in Telegram. Retry failed and uncertain messages? This can create duplicates.",
-            )
-            == QMessageBox.StandardButton.Yes
-        ):
-            self.worker.submit(
+        confirm(
+            self,
+            "Retry delivery",
+            "An uncertain message may already be in Telegram. Retrying can create duplicates.",
+            lambda: self.worker.submit(
                 (self.revision, copy.deepcopy(self.profile), "retry", None)
-            )
+            ),
+        )
+
+    def open_error_logs(self):
+        from .diagnostics import initialize
+
+        directory = initialize()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
 
     def export_logs(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export logs", "LiKeWatch.log", "Log (*.log)"
+        choose_file(
+            self,
+            "Export logs",
+            "Log (*.log)",
+            lambda path: Path(path).write_text(
+                self.logs.toPlainText(), encoding="utf-8"
+            ),
+            save=True,
+            suggested="LiKeWatch.log",
         )
-        if path:
-            Path(path).write_text(self.logs.toPlainText(), encoding="utf-8")
 
     def closeEvent(self, event):
         self.stop()

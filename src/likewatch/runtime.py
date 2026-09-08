@@ -6,13 +6,15 @@ import time
 from PySide6.QtCore import QThread, Signal
 from .capture import Capture
 from .ocr import OcrSupervisor
-from .rules import RuleState, describe
+from .rules import RuleState, describe, evaluate
+from .diagnostics import logger
 from .domain import Observation, Quality
 from .messaging import deliver
 
 
 class MonitorWorker(QThread):
     result = Signal(object)
+    captured = Signal(object)
     error = Signal(int, str)
     history = Signal(int, object)
 
@@ -44,7 +46,16 @@ class MonitorWorker(QThread):
                 except queue.Empty:
                     continue
                 try:
-                    if action == "ack":
+                    if revision != self.revision:
+                        continue
+                    if action == "snapshot":
+                        try:
+                            frame = capture.read(profile)
+                        finally:
+                            capture.close()
+                        if revision == self.revision:
+                            self.captured.emit((revision, frame, time.time()))
+                    elif action == "ack":
                         self.store.acknowledge(payload)
                     elif action == "retry":
                         self.store.retry_uncertain(profile.id)
@@ -52,9 +63,12 @@ class MonitorWorker(QThread):
                         self.store.enqueue(
                             profile, "TEST", "LiKeWatch destination test"
                         )
-                    elif action == "capture":
-                        frame = capture.read(profile)
-                        timestamp = time.time()
+                    elif action in ("capture", "ocr"):
+                        if action == "ocr":
+                            frame, timestamp = payload
+                        else:
+                            frame = capture.read(profile)
+                            timestamp = time.time()
                         self.frame_id += 1
                         h, w = frame.shape[:2]
                         eligible = [
@@ -79,6 +93,30 @@ class MonitorWorker(QThread):
                                 )
                         with self.commit_guard:
                             if revision != self.revision:
+                                continue
+                            if action == "ocr":
+                                phases = {
+                                    r.id: (
+                                        "PREVIEW",
+                                        evaluate(
+                                            r.condition,
+                                            observations,
+                                            timestamp,
+                                            profile.freshness,
+                                        ).name,
+                                    )
+                                    for r in profile.rules
+                                }
+                                self.result.emit(
+                                    (
+                                        revision,
+                                        frame,
+                                        observations,
+                                        previews,
+                                        timestamp,
+                                        phases,
+                                    )
+                                )
                                 continue
                             active = self.store.active(profile.id)
                             for rule in profile.rules:
@@ -140,6 +178,7 @@ class MonitorWorker(QThread):
                             )
                     self.history.emit(revision, self.store.history(profile.id))
                 except Exception as error:
+                    logger.exception("Monitor operation %s failed", action)
                     for state in self.states.values():
                         state.count = state.recovery_count = 0
                     # Network errors are handled elsewhere; never expose token-bearing URLs.
@@ -167,4 +206,4 @@ class DeliveryWorker(QThread):
                     deliver(self.store, self.profile_id)
                     self.changed.emit()
                 except Exception:
-                    pass
+                    logger.exception("Delivery worker failed")

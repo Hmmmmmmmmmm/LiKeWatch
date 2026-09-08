@@ -36,9 +36,53 @@ def run():
             while window.busy and time.time() < deadline:
                 app.processEvents()
                 time.sleep(0.02)
+            assert window.is_still and not window.observations
+            window.trigger_ocr()
+            deadline = time.time() + 40
+            while window.busy and time.time() < deadline:
+                app.processEvents()
+                time.sleep(0.02)
             assert len(window.observations) == 2, (
                 "GUI pipeline did not publish observations"
             )
+            if "--ui-stress" in __import__("sys").argv:
+                from PySide6.QtCore import QPointF, Qt
+                from PySide6.QtTest import QTest
+
+                for _ in range(30):
+                    window.open_settings()
+                    editor = window.pages.currentWidget()
+                    assert not editor.isWindow()
+                    app.processEvents()
+                    time.sleep(0.05)
+                    editor.reject()
+                    app.processEvents()
+                    app.processEvents()
+                    assert window.pages.currentWidget() is window.splitter
+                window.profile.rules = []
+                window.invalidate()
+                window.variables.selectRow(0)
+                window.remove_region()
+                app.processEvents()
+                assert len(window.profile.regions) == 1
+                window.edit_geometry.setChecked(True)
+                app.processEvents()
+                handle = window.image.handles[0]
+                start = window.image.mapFromScene(handle.pos())
+                end = window.image.mapFromScene(handle.pos() + QPointF(5, 5))
+                QTest.mousePress(
+                    window.image.viewport(), Qt.MouseButton.LeftButton, pos=start
+                )
+                QTest.mouseMove(window.image.viewport(), end, 30)
+                app.processEvents()
+                if "--screenshot" in __import__("sys").argv:
+                    index = __import__("sys").argv.index("--screenshot")
+                    window.grab().save(__import__("sys").argv[index + 1] + ".loupe.png")
+                QTest.mouseRelease(
+                    window.image.viewport(), Qt.MouseButton.LeftButton, pos=end
+                )
+                app.processEvents()
+                app.processEvents()
             if "--screenshot" in __import__("sys").argv:
                 index = __import__("sys").argv.index("--screenshot")
                 window.grab().save(__import__("sys").argv[index + 1])

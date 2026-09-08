@@ -36,8 +36,8 @@ jobs:
         with:
           name: LiKeWatch-${{ matrix.name }}
           path: |
-            dist/LiKeWatch-0.1-*.exe
-            dist/LiKeWatch-0.1-*.dmg
+            dist/LiKeWatch-*.exe
+            dist/LiKeWatch-*.dmg
             dist/*.sha256
             dist/native-smoke.json
           if-no-files-found: error
@@ -56,4 +56,4 @@ jobs:
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/*.exe artifacts/*.dmg artifacts/*.sha256 --verify-tag --title "LiKeWatch $GITHUB_REF_NAME" --notes-file docs/RELEASE-v0.1.md
+        run: gh release create "$GITHUB_REF_NAME" artifacts/*.exe artifacts/*.dmg artifacts/*.sha256 --verify-tag --title "LiKeWatch $GITHUB_REF_NAME" --notes-file "docs/RELEASE-${GITHUB_REF_NAME}.md"

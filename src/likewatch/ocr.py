@@ -45,6 +45,9 @@ class TextDetector:
 
 
 def _worker(connection):
+    from .diagnostics import initialize, logger
+
+    initialize()
     detector = None
     try:
         detector = TextDetector()
@@ -64,6 +67,7 @@ def _worker(connection):
                     )
                     previews[region.id] = (original, corrected, prepared)
                 except Exception:
+                    logger.exception("OCR failed for region %s", region.id)
                     observations[region.id] = Observation(
                         region.id, "", 0, Quality.OCR_ERROR, None, timestamp, frame_id
                     )

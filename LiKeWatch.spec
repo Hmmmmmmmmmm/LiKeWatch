@@ -1,6 +1,7 @@
 # PyInstaller build: native wheels supply the OCR libraries on each platform.
 from pathlib import Path
 import sys
+from likewatch import __version__
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 root = Path(SPECPATH)
@@ -19,7 +20,7 @@ if sys.platform == 'darwin':
         entitlements_file=str(root/'assets/entitlements.plist'))
     coll=COLLECT(exe,a.binaries,a.datas,strip=False,upx=False,name='LiKeWatch')
     app=BUNDLE(coll,name='LiKeWatch.app',bundle_identifier='com.likewatch.desktop',
-        info_plist={'CFBundleShortVersionString':'0.1.0','CFBundleVersion':'1',
+        info_plist={'CFBundleShortVersionString':__version__,'CFBundleVersion':'2',
             'NSCameraUsageDescription':'LiKeWatch reads selected regions from your camera to monitor values.',
             'NSScreenCaptureUsageDescription':'LiKeWatch reads selected regions from your screen to monitor values.',
             'NSHighResolutionCapable':True,'LSMinimumSystemVersion':'15.0'})
