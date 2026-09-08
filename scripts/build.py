@@ -16,7 +16,7 @@ from likewatch import __version__
 dist = Path(os.environ.get("LIKEWATCH_BUILD_DIR", str(root / "dist"))).resolve()
 
 if sys.platform == "darwin":
-    subprocess.run(["/usr/bin/swiftc", str(root / "assets/authenticate.swift"),
+    subprocess.run(["/usr/bin/swiftc", "-target", f"{platform.machine()}-apple-macos15.0", str(root / "assets/authenticate.swift"),
                     "-o", str(root / "assets/native-auth")], check=True)
 collect(root)
 subprocess.run(
