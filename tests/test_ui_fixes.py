@@ -196,3 +196,59 @@ def test_variable_selection_highlights_region(window, app):
         for polygon in polygons:
             assert polygon.pen().width() == (5 if polygon.data(0) == selected else 2)
             assert polygon.pen().isCosmetic()
+
+
+def test_geometry_refresh_preserves_zoom(window, app):
+    window.snapshot()
+    wait(app, lambda: not window.busy)
+    window.image.scale(2.4, 2.4)
+    before = window.image.transform()
+    window.region_edited(window.profile.regions[0].id, window.profile.regions[0].corners)
+    assert window.image.transform() == before
+
+
+def test_preview_always_shows_corrected_and_ocr(window):
+    region = window.profile.regions[0]
+    window.selected_id = region.id
+    arrays = [np.full((20, 20, 3), value, np.uint8) for value in (20, 90, 180)]
+    window.previews[region.id] = arrays
+    window.update_preview()
+    assert not hasattr(window, 'preprocessed')
+    for label, value in ((window.original, 90), (window.corrected, 180)):
+        assert label.pixmap().toImage().pixelColor(10, 10).red() == value
+
+
+def test_delivery_toggle_is_on_main_page(window):
+    window.profile.chat_id = 'test-only'
+    window.delivery_toggle.setChecked(True)
+    assert window.profile.delivery_enabled
+    assert window.delivery.profile_id == window.profile.id
+    window.delivery_toggle.setChecked(False)
+    assert not window.profile.delivery_enabled
+    assert window.delivery.profile_id is None
+    window.open_settings()
+    editor = window.pages.currentWidget()
+    assert not hasattr(editor, 'enabled')
+    assert all(box.toolTip() for box in editor.route_boxes.values())
+    editor.reject()
+
+
+def test_macos_accessibility_summary_has_no_native_cells(app):
+    from PySide6.QtGui import QAccessible
+    from PySide6.QtWidgets import QTableWidgetItem
+    from likewatch.accessibility import install_table_workaround, TableSummary
+    from likewatch.ui import StableTable
+
+    if not install_table_workaround():
+        pytest.skip('macOS 27 workaround')
+    table = StableTable(1, 1)
+    table.setItem(0, 0, QTableWidgetItem('14'))
+    interface = QAccessible.queryAccessibleInterface(table)
+    assert isinstance(interface, TableSummary)
+    assert interface.childCount() == 0
+    assert interface.role() == QAccessible.Role.StaticText
+    for count in (0, 3, 1, 5, 0):
+        table.setRowCount(count)
+        app.processEvents()
+        assert interface.childCount() == 0
+        assert isinstance(interface.text(QAccessible.Text.Name), str)

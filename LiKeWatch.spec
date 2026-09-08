@@ -20,7 +20,7 @@ if sys.platform == 'darwin':
         entitlements_file=str(root/'assets/entitlements.plist'))
     coll=COLLECT(exe,a.binaries,a.datas,strip=False,upx=False,name='LiKeWatch')
     app=BUNDLE(coll,name='LiKeWatch.app',bundle_identifier='com.likewatch.desktop',
-        info_plist={'CFBundleShortVersionString':__version__,'CFBundleVersion':'2',
+        info_plist={'CFBundleShortVersionString':__version__,'CFBundleVersion':'3',
             'NSCameraUsageDescription':'LiKeWatch reads selected regions from your camera to monitor values.',
             'NSScreenCaptureUsageDescription':'LiKeWatch reads selected regions from your screen to monitor values.',
             'NSHighResolutionCapable':True,'LSMinimumSystemVersion':'15.0'})
