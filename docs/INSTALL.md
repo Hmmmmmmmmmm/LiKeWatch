@@ -40,3 +40,8 @@ requires checking Telegram before an explicit retry, which may duplicate a messa
 This is an assistive monitoring tool. Qualify OCR on the actual fonts, viewing
 geometry and lighting before relying on its readings. Perspective correction
 cannot restore glare-obscured characters or missing decimal points.
+
+After changing a source or its resolution, existing variables show SOURCE_ERROR.
+Verify placement on the new snapshot, then edit the variable or drag its corners
+to bind it to that source. Re-select regions if the content moved. This prevents
+old camera coordinates from silently becoming readings on another screen.

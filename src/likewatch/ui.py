@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, Signal, QTimer, QPointF, QSettings
+from PySide6.QtCore import Qt, Signal, QTimer, QPointF, QSettings, QLockFile
 from PySide6.QtGui import QImage, QPixmap, QPen, QColor, QPainter, QPolygonF
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
 from platformdirs import user_data_dir
 from .domain import Region, Rule, Quality
 from .profiles import demo_profile, load, save, validate
-from .rules import evaluate
+from .rules import evaluate, explain
 from .imaging import validate_corners, rectify, preprocess
 from .capture import demo_frame
 from .storage import Store
@@ -263,7 +263,10 @@ class ConditionEditor(QWidget):
         actions.addWidget(button("Remove", self.remove))
         layout.addLayout(actions)
         self.tree.itemDoubleClicked.connect(lambda *_: self.edit())
-        self.add_node(node or {"group": "ALL", "children": []}, None)
+        node = node or {"group": "ALL", "children": []}
+        if "group" not in node:
+            node = {"group": "ALL", "children": [node]}
+        self.add_node(node, None)
         self.tree.expandAll()
 
     def add_node(self, node, parent):
@@ -485,6 +488,8 @@ class SettingsDialog(QDialog):
                 raise ValueError("Set a Telegram chat ID before enabling delivery")
             save_token(p.id, self.token.text())
             self.accept()
+        except ValueError as error:
+            QMessageBox.warning(self, "Invalid settings", str(error))
         except Exception as error:
             QMessageBox.warning(
                 self,
@@ -500,6 +505,10 @@ class MainWindow(QMainWindow):
         self.resize(1500, 930)
         self.data_dir = Path(data_dir or user_data_dir("LiKeWatch", "LiKeWatch"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.instance_lock = QLockFile(str(self.data_dir / "instance.lock"))
+        self.instance_lock.setStaleLockTime(0)
+        if not self.instance_lock.tryLock(0):
+            raise RuntimeError("LiKeWatch is already running with this data directory.")
         self.profile = demo_profile()
         if (self.data_dir / "last-profile.json").exists():
             try:
@@ -634,6 +643,7 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.addWidget(button("+ Rule", self.add_rule))
         row.addWidget(button("Edit", self.edit_rule))
+        row.addWidget(button("Explain", self.explain_rule))
         row.addWidget(button("Remove", self.remove_rule))
         rl.addLayout(row)
         rl.addWidget(QLabel("Incidents and delivery · latest 100 events"))
@@ -981,6 +991,19 @@ class MainWindow(QMainWindow):
             self.profile.rules[row] = dialog.rule
             self.invalidate()
 
+    def explain_rule(self):
+        row = self.rule_list.currentRow()
+        if 0 <= row < len(self.profile.rules):
+            rule = self.profile.rules[row]
+            details = explain(
+                rule.condition,
+                {r.id: r for r in self.profile.regions},
+                self.observations,
+                time.time(),
+                self.profile.freshness,
+            )
+            QMessageBox.information(self, rule.name, details)
+
     def remove_rule(self):
         row = self.rule_list.currentRow()
         if 0 <= row < len(self.profile.rules):
@@ -1117,4 +1140,5 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(250, self.close)
             return
         save(self.profile, self.data_dir / "last-profile.json")
+        self.instance_lock.unlock()
         event.accept()

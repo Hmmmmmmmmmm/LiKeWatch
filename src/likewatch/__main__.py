@@ -11,13 +11,17 @@ def main():
 
         run()
         return
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QMessageBox
     from .ui import MainWindow
 
     app = QApplication(sys.argv)
     app.setApplicationName("LiKeWatch")
     app.setOrganizationName("LiKeWatch")
-    window = MainWindow()
+    try:
+        window = MainWindow()
+    except RuntimeError as error:
+        QMessageBox.information(None, "LiKeWatch", str(error))
+        return
     window.show()
     sys.exit(app.exec())
 

@@ -24,3 +24,9 @@ was not reproduced with all its obsolete native broadcast dependencies. Its
 source is preserved and the useful OCR path was extracted into a separately
 runnable monitor. Native feasibility is verified against LiKeWatch's actual
 packaged OCR path, not asserted for legacy ScoreSight.
+
+Windows native adapter: the standalone Python 3.13 x64 wheel documented by
+upstream tesserocr, from `simonflueckiger/tesserocr-windows_build` release
+`tesserocr-v2.10.0-tesseract-5.5.2`. Its SHA-256 is pinned in pyproject.toml.
+Windows uses tesserocr 2.10.0/Tesseract 5.5.2; macOS uses tesserocr 2.11.0.
+Both execute the same packaged OCR acceptance check.

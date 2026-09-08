@@ -128,3 +128,29 @@ class RuleState:
                 self.count = 0
                 return "ALERT", self.incident_id
         return None
+
+
+def describe(node, regions):
+    if "group" in node:
+        joiner = " AND " if node["group"] == "ALL" else " OR "
+        return "(" + joiner.join(describe(c, regions) for c in node["children"]) + ")"
+    region = regions.get(node["variable"])
+    name = region.name if region else node["variable"]
+    return f"{name} {node['op']} {node['value']}"
+
+
+def explain(node, regions, observations, now, freshness, depth=0):
+    result = evaluate(node, observations, now, freshness).name
+    line = "  " * depth + f"{describe(node, regions)} → {result}"
+    if "group" in node:
+        return "\n".join(
+            [line]
+            + [
+                explain(c, regions, observations, now, freshness, depth + 1)
+                for c in node["children"]
+            ]
+        )
+    obs = observations.get(node["variable"])
+    return line + (
+        f" (read: {obs.value}; {obs.quality.value})" if obs else " (unavailable)"
+    )

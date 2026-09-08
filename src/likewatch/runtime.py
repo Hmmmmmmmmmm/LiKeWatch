@@ -6,7 +6,7 @@ import time
 from PySide6.QtCore import QThread, Signal
 from .capture import Capture
 from .ocr import OcrSupervisor
-from .rules import RuleState
+from .rules import RuleState, describe
 from .domain import Observation, Quality
 from .messaging import deliver
 
@@ -98,7 +98,7 @@ class MonitorWorker(QThread):
                                     self.store.enqueue(
                                         profile,
                                         kind,
-                                        f"{rule.name}\n{values}\nSource: {profile.source}",
+                                        f"{rule.name}\nCondition: {describe(rule.condition, {r.id: r for r in profile.regions})}\n{values}\nSource: {profile.source}",
                                         incident,
                                         rule,
                                         now=timestamp,
