@@ -23,6 +23,8 @@ subprocess.run(
         "PyInstaller",
         "--clean",
         "--noconfirm",
+        "--workpath",
+        os.environ.get("LIKEWATCH_WORK_DIR", str(root / "build")),
         "--distpath",
         str(dist),
         str(root / "LiKeWatch.spec"),
@@ -44,7 +46,7 @@ if sys.platform == "darwin":
         check=True,
         timeout=120,
     )
-    staging = root / "build/dmg"
+    staging = Path(os.environ.get("LIKEWATCH_WORK_DIR", str(root / "build"))) / "dmg"
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True, exist_ok=True)

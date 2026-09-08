@@ -163,7 +163,10 @@ class ImageView(QGraphicsView):
         self.setSceneRect(0, 0, w, h)
         for region in regions:
             points = [QPointF(x * (w - 1), y * (h - 1)) for x, y in region.corners]
-            pen = QPen(QColor("#2dd4bf" if region.id == selected else "#60a5fa"), 2)
+            pen = QPen(
+                QColor("#2dd4bf" if region.id == selected else "#60a5fa"),
+                5 if region.id == selected else 2,
+            )
             pen.setCosmetic(True)
             polygon = self.scene().addPolygon(QPolygonF(points), pen)
             polygon.setData(0, region.id)

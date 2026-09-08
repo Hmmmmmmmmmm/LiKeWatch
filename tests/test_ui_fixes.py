@@ -178,3 +178,21 @@ def test_diagnostic_formatter_redacts_token():
     )
     result = RedactedFormatter().format(record)
     assert "secret" not in result and "private" not in result and "[REDACTED]" in result
+
+
+def test_variable_selection_highlights_region(window, app):
+    from PySide6.QtWidgets import QGraphicsPolygonItem
+
+    window.snapshot()
+    wait(app, lambda: not window.busy)
+    for row in (1, 0):
+        window.variables.selectRow(row)
+        app.processEvents()
+        selected = window.profile.regions[row].id
+        assert window.selected_id == selected
+        polygons = [item for item in window.image.scene().items()
+                    if isinstance(item, QGraphicsPolygonItem)]
+        assert len(polygons) == len(window.profile.regions)
+        for polygon in polygons:
+            assert polygon.pen().width() == (5 if polygon.data(0) == selected else 2)
+            assert polygon.pen().isCosmetic()

@@ -1,4 +1,4 @@
-# Install LiKeWatch 0.1
+# Install LiKeWatch
 
 ## Windows 10/11 x64
 Download `LiKeWatch-0.1-Windows-x64-portable.exe` and launch it from a writable
@@ -19,12 +19,18 @@ Camera access and screen recording need OS permission. Enable LiKeWatch under
 Privacy & Security → Camera and Screen & System Audio Recording as applicable,
 then quit/reopen it. The app does not request camera/screen access in demo mode.
 
+Keep the installed app in `/Applications` or your local `~/Applications` folder,
+not in a cloud-synced folder. When upgrading, replace the old Applications copy
+and point launchers to the updated app so an older version is not opened by mistake.
+
 ## First run
-1. Choose **Snapshot** in Demo mode. The two demo readings should be 83.2 and 18.4.
+1. Choose **Snapshot** in Demo mode, then **Trigger OCR on still image**.
+   The two demo readings should be 83.2 and 18.4.
 2. Choose camera, screen, or Open image. Set the camera/monitor index in Settings.
 3. Take a snapshot, then **+ Region**. Click top-left, top-right, bottom-right,
    bottom-left. Choose number/text, unit, confidence threshold and preprocessing.
 4. Select **Edit corners on frozen frame** to drag the selected region's handles.
+   Clicking a variable selects its region with a thicker border at every zoom level.
 5. Add conditions with nested AND/OR groups. Configure consecutive samples and,
    if required, a separate recovery condition for hysteresis.
 6. Start monitoring. Events remain local until delivery is enabled.

@@ -26,6 +26,11 @@ python -m likewatch --self-test
 python scripts/build.py
 ```
 
+For a checkout in OneDrive or another synced folder, keep the virtual environment
+and installed app outside that folder. Set `PYINSTALLER_CONFIG_DIR`,
+`LIKEWATCH_WORK_DIR`, and `LIKEWATCH_BUILD_DIR` to local, unsynced directories
+when building so native frameworks and symbolic links remain intact.
+
 `--self-test` uses real OCR against a generated demo, then runs the desktop
 pipeline offscreen. It does not access cameras or send Telegram messages.
 
