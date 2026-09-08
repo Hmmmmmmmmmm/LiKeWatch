@@ -1,4 +1,5 @@
 """Serializable contracts. This module has no UI, imaging, or network imports."""
+
 from dataclasses import dataclass, field, asdict
 from decimal import Decimal
 from enum import StrEnum
@@ -70,8 +71,9 @@ def parse_observation(region, raw, confidence, timestamp, frame_id):
             value = Decimal(text)
             if not value.is_finite() or abs(value.adjusted()) > 1000:
                 quality = Quality.PARSE_ERROR
-            elif ((region.minimum and value < Decimal(region.minimum)) or
-                  (region.maximum and value > Decimal(region.maximum))):
+            elif (region.minimum and value < Decimal(region.minimum)) or (
+                region.maximum and value > Decimal(region.maximum)
+            ):
                 quality = Quality.OUT_OF_RANGE
             else:
                 quality = Quality.VALID
@@ -113,7 +115,7 @@ class Profile:
     routes: list[str] = field(default_factory=lambda: ["ALERT", "RECOVERY", "TEST"])
 
     def source_key(self):
-        return f'{self.source}:{self.device}:{self.image_path if self.source == "image" else ""}'
+        return f"{self.source}:{self.device}:{self.image_path if self.source == 'image' else ''}"
 
     def export(self):
         data = asdict(self)

@@ -4,6 +4,7 @@ Copyright (c) 2024 OCC AI. MIT; see vendor/scoresight/LICENSE.
 The original API initialization / PIL SetImage / GetUTF8Text sequence is
 retained; scoreboard models, UI state, and implicit text substitutions are removed.
 """
+
 from pathlib import Path
 import sys
 import multiprocessing as mp
@@ -19,13 +20,22 @@ def resource_path(*parts):
 class TextDetector:
     def __init__(self):
         from tesserocr import PyTessBaseAPI, OEM
-        self.api = PyTessBaseAPI(path=str(resource_path("assets", "tessdata")), lang="eng", oem=OEM.LSTM_ONLY)
+
+        self.api = PyTessBaseAPI(
+            path=str(resource_path("assets", "tessdata")), lang="eng", oem=OEM.LSTM_ONLY
+        )
 
     def read(self, image, region):
         from PIL import Image
+
         self.api.SetPageSegMode(region.psm)
-        whitelist = "0123456789.+-eE" if region.kind == "number" else (
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:;!?_-/+()=%")
+        whitelist = (
+            "0123456789.+-eE"
+            if region.kind == "number"
+            else (
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:;!?_-/+()=%"
+            )
+        )
         self.api.SetVariable("tessedit_char_whitelist", whitelist)
         self.api.SetImage(Image.fromarray(image))
         return self.api.GetUTF8Text().strip(), float(self.api.MeanTextConf())
@@ -49,10 +59,14 @@ def _worker(connection):
                     original, corrected = rectify(frame, region)
                     prepared = preprocess(corrected, region.preprocessing)
                     raw, confidence = detector.read(prepared, region)
-                    observations[region.id] = parse_observation(region, raw, confidence, timestamp, frame_id)
+                    observations[region.id] = parse_observation(
+                        region, raw, confidence, timestamp, frame_id
+                    )
                     previews[region.id] = (original, corrected, prepared)
                 except Exception:
-                    observations[region.id] = Observation(region.id, "", 0, Quality.OCR_ERROR, None, timestamp, frame_id)
+                    observations[region.id] = Observation(
+                        region.id, "", 0, Quality.OCR_ERROR, None, timestamp, frame_id
+                    )
             connection.send((observations, previews))
     finally:
         if detector:
@@ -62,6 +76,7 @@ def _worker(connection):
 
 class OcrSupervisor:
     """One in-flight frame, bounded timeout, restart after native crash/hang."""
+
     def __init__(self, timeout=15):
         self.timeout = timeout
         self.process = self.connection = None
@@ -71,7 +86,9 @@ class OcrSupervisor:
             self.close()
             parent, child = mp.get_context("spawn").Pipe()
             self.connection = parent
-            self.process = mp.get_context("spawn").Process(target=_worker, args=(child,), daemon=True)
+            self.process = mp.get_context("spawn").Process(
+                target=_worker, args=(child,), daemon=True
+            )
             self.process.start()
             child.close()
         try:
@@ -81,7 +98,9 @@ class OcrSupervisor:
             return self.connection.recv()
         except (EOFError, BrokenPipeError, OSError, TimeoutError):
             self.close()
-            raise RuntimeError("OCR worker failed or timed out; retry the snapshot") from None
+            raise RuntimeError(
+                "OCR worker failed or timed out; retry the snapshot"
+            ) from None
 
     def close(self):
         if self.process:

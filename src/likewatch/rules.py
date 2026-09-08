@@ -1,4 +1,5 @@
 """Bounded condition trees, three-valued evaluation, and incident transitions."""
+
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
@@ -12,8 +13,14 @@ class Truth(Enum):
     UNKNOWN = 2
 
 
-OPS = {">": operator.gt, ">=": operator.ge, "<": operator.lt,
-       "<=": operator.le, "==": operator.eq, "!=": operator.ne}
+OPS = {
+    ">": operator.gt,
+    ">=": operator.ge,
+    "<": operator.lt,
+    "<=": operator.le,
+    "==": operator.eq,
+    "!=": operator.ne,
+}
 
 
 def validate_tree(node, regions, depth=0, budget=None):
@@ -23,7 +30,11 @@ def validate_tree(node, regions, depth=0, budget=None):
     if depth > 8 or budget[0] < 0 or not isinstance(node, dict):
         raise ValueError("Condition exceeds 8 levels or 128 nodes")
     if "group" in node:
-        if node["group"] not in ("ALL", "ANY") or not isinstance(node.get("children"), list) or not node["children"]:
+        if (
+            node["group"] not in ("ALL", "ANY")
+            or not isinstance(node.get("children"), list)
+            or not node["children"]
+        ):
             raise ValueError("An AND/OR group needs at least one condition")
         for child in node["children"]:
             validate_tree(child, regions, depth + 1, budget)
@@ -57,7 +68,9 @@ def evaluate(node, observations, now, freshness):
     obs = observations.get(node["variable"])
     if obs is None or not obs.current(now, freshness):
         return Truth.UNKNOWN
-    threshold = Decimal(node["value"]) if isinstance(obs.value, Decimal) else node["value"]
+    threshold = (
+        Decimal(node["value"]) if isinstance(obs.value, Decimal) else node["value"]
+    )
     return Truth.TRUE if OPS[node["op"]](obs.value, threshold) else Truth.FALSE
 
 
@@ -80,14 +93,29 @@ class RuleState:
         if frame is None or frame == self.last_frame:
             return None
         self.last_frame = frame
-        if self.last_time is None or now - self.last_time > rule.max_gap or now < self.last_time:
+        if (
+            self.last_time is None
+            or now - self.last_time > rule.max_gap
+            or now < self.last_time
+        ):
             self.count = self.recovery_count = 0
         self.last_time = now
         self.truth = evaluate(rule.condition, observations, now, freshness)
         if self.incident_id:
-            recovery = evaluate(rule.recovery, observations, now, freshness) if rule.recovery else (
-                Truth.TRUE if self.truth == Truth.FALSE else Truth.FALSE if self.truth == Truth.TRUE else Truth.UNKNOWN)
-            self.recovery_count = self.recovery_count + 1 if recovery == Truth.TRUE else 0
+            recovery = (
+                evaluate(rule.recovery, observations, now, freshness)
+                if rule.recovery
+                else (
+                    Truth.TRUE
+                    if self.truth == Truth.FALSE
+                    else Truth.FALSE
+                    if self.truth == Truth.TRUE
+                    else Truth.UNKNOWN
+                )
+            )
+            self.recovery_count = (
+                self.recovery_count + 1 if recovery == Truth.TRUE else 0
+            )
             if self.recovery_count >= rule.recover_confirm:
                 incident = self.incident_id
                 self.incident_id = None
