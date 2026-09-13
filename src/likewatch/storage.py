@@ -72,6 +72,8 @@ class Store:
                 f"\nSource: {html.escape(profile.source)}"
                 f"\nTimestamp: {time.strftime('%Y-%m-%d %H:%M:%S %z', time.localtime(now))}"
                 f"\nEvent ID: <code>{html.escape(event_id)}</code>")
+        if incident and kind in ("ALERT", "TEST"):
+            body += "\nReply to this message with ACK to acknowledge."
         with self.connection() as db:
             if db.execute("SELECT 1 FROM events WHERE id=?", (event_id,)).fetchone():
                 return event_id
@@ -79,6 +81,12 @@ class Store:
                 db.execute(
                     "INSERT INTO incidents(id,profile,rule_id,name,activated,alarm_required) VALUES(?,?,?,?,?,?)",
                     (incident, profile.id, rule.id, rule.name, now, int(profile.local_alarm)),
+                )
+            if kind == "TEST" and incident:
+                # Recover immediately so a synthetic incident never enters rule state.
+                db.execute(
+                    "INSERT INTO incidents(id,profile,rule_id,name,activated,recovered,alarm_required) VALUES(?,?,?,?,?,?,?)",
+                    (incident, profile.id, None, "Test incident", now, now, int(profile.local_alarm)),
                 )
             if kind == "RECOVERY":
                 db.execute(
@@ -188,9 +196,24 @@ class Store:
 
     def ack_reply(self, profile, chat, topic, message_id):
         with self.connection() as db:
-            row = db.execute("SELECT incident FROM outbox WHERE profile=? AND chat=? AND COALESCE(topic,'')=? AND message_id=? AND state='accepted' AND incident IS NOT NULL", (profile, str(chat), str(topic or ''), message_id)).fetchone()
+            row = db.execute("SELECT incident FROM outbox WHERE profile=? AND chat=? AND (COALESCE(topic,'')='' OR topic=?) AND message_id=? AND state='accepted' AND incident IS NOT NULL", (profile, str(chat), str(topic or ''), message_id)).fetchone()
             if row:
                 db.execute("UPDATE incidents SET acknowledged=1 WHERE id=?", (row[0],))
+                return True
+        return False
+
+    def ack_single_pending(self, profile, chat, topic, sent_at):
+        """A bare ACK is safe only for one pending incident in this destination."""
+        with self.connection() as db:
+            rows = db.execute(
+                """SELECT DISTINCT i.id FROM incidents i JOIN outbox o ON o.incident=i.id
+                WHERE o.profile=? AND o.chat=? AND COALESCE(o.topic,'')=?
+                AND o.state='accepted' AND o.message_id IS NOT NULL
+                AND i.acknowledged=0 AND CAST(i.activated AS INTEGER)<=?""",
+                (profile, str(chat), str(topic or ''), sent_at),
+            ).fetchall()
+            if len(rows) == 1:
+                db.execute("UPDATE incidents SET acknowledged=1 WHERE id=?", (rows[0][0],))
                 return True
         return False
 

@@ -366,3 +366,31 @@ def test_snapshot_failure_does_not_lose_incident(window,app,monkeypatch):
     wait(app,lambda: bool(window.store.active(window.profile.id)))
     window.toggle()
     assert window.store.history(window.profile.id)[0]['kind']=='ALERT'
+
+
+def test_test_send_logs_and_history_update_inside_settings(window,app,monkeypatch):
+    # Stop network delivery; inspect the durable queue without sending a real message.
+    window.delivery.stopping.set();assert window.delivery.wait(5000)
+    window.profile.delivery_enabled=True;window.profile.chat_id='123'
+    window.open_settings();editor=window.pages.currentWidget()
+    editor.attach.setChecked(True)
+    editor.test_destination()
+    wait(app,lambda:bool(window.store.history(window.profile.id)))
+    wait(app,lambda:'TEST ' in window.logs.toPlainText())
+    assert 'Test incident requested with snapshot' in window.logs.toPlainText()
+    row=window.store.claim(window.profile.id)
+    assert row['attachment'] and row['incident']
+    window.store.delivered(row['seq'],'accepted',message_id=42)
+    window.refresh_history()
+    wait(app,lambda:'accepted' in window.logs.toPlainText())
+    before=window.logs.toPlainText()
+    window.show_history(window.revision,window.store.history(window.profile.id))
+    assert window.logs.toPlainText()==before
+    editor.reject()
+
+
+def test_test_send_busy_is_visible(window,monkeypatch):
+    window.profile.delivery_enabled=True
+    monkeypatch.setattr(window.worker,'submit',lambda *_:False)
+    window.test_send()
+    assert 'Test incident not queued' in window.logs.toPlainText()

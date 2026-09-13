@@ -108,3 +108,45 @@ def test_condition_editor_accepts_imported_leaf(app):
     editor = ConditionEditor(profile.regions, leaf)
     assert editor.value() == {"group": "ALL", "children": [leaf]}
     editor.deleteLater()
+
+
+@pytest.mark.parametrize('attach,use_preview', [(False,False),(True,False),(True,True)])
+def test_destination_incident_snapshot_and_history(app, tmp_path, monkeypatch, attach, use_preview):
+    monkeypatch.setattr('likewatch.runtime.OcrSupervisor', FakeOcr)
+    reads=[]
+    monkeypatch.setattr('likewatch.runtime.Capture.read', lambda *_: reads.append(True) or demo_frame())
+    store=Store(tmp_path/'db')
+    p=demo_profile();p.delivery_enabled=True;p.chat_id='123'
+    p.attach_snapshot=attach;p.local_alarm=True
+    worker=MonitorWorker(store);history=[]
+    worker.history.connect(lambda *args: history.append(args))
+    worker.start()
+    try:
+        assert worker.submit((0,p,'test',demo_frame() if use_preview else None))
+        wait_for(app,lambda:bool(history))
+        row=store.claim(p.id)
+        assert bool(row['attachment']) == attach
+        assert bool(reads) == (attach and not use_preview)
+        assert row['incident'] in store.pending_alarms(p.id)
+        assert not store.active(p.id)
+        assert 'Reply to this message with ACK' in row['body']
+        store.delivered(row['seq'],'accepted',message_id=42)
+        assert store.ack_reply(p.id,'123',None,42)
+        assert not store.pending_alarms(p.id)
+    finally:
+        worker.stopping.set();assert worker.wait(5000)
+
+
+def test_snapshot_test_failure_does_not_silently_send_text(app,tmp_path,monkeypatch):
+    monkeypatch.setattr('likewatch.runtime.OcrSupervisor',FakeOcr)
+    def fail(*_):
+        raise ValueError('Capture unavailable')
+    monkeypatch.setattr('likewatch.runtime.Capture.read',fail)
+    store=Store(tmp_path/'db');p=demo_profile();p.attach_snapshot=True
+    worker=MonitorWorker(store);errors=[];worker.error.connect(lambda *args:errors.append(args));worker.start()
+    try:
+        worker.submit((0,p,'test',None));wait_for(app,lambda:bool(errors))
+        assert not store.history(p.id)
+        assert 'Capture unavailable' in errors[0][1]
+    finally:
+        worker.stopping.set();assert worker.wait(5000)

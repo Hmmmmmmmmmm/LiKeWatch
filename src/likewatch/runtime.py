@@ -8,7 +8,7 @@ from .capture import Capture
 from .ocr import OcrSupervisor
 from .rules import RuleState, describe, evaluate
 from .diagnostics import logger
-from .domain import Observation, Quality
+from .domain import Observation, Quality, uid
 from .messaging import deliver, poll_acknowledgements
 from .snapshots import incident_snapshot, rule_variables
 
@@ -61,8 +61,21 @@ class MonitorWorker(QThread):
                     elif action == "retry":
                         self.store.retry_uncertain(profile.id)
                     elif action == "test":
+                        attachment = None
+                        if profile.attach_snapshot:
+                            frame = payload
+                            if frame is None:
+                                try:
+                                    frame = capture.read(profile)
+                                finally:
+                                    capture.close()
+                            h, w = frame.shape[:2]
+                            regions = [r for r in profile.regions
+                                       if r.source_key == profile.source_key() and r.source_size == [w, h]]
+                            attachment = incident_snapshot(frame, regions)
                         self.store.enqueue(
-                            profile, "TEST", "LiKeWatch destination test"
+                            profile, "TEST", "LiKeWatch test incident", incident=uid(),
+                            attachment=attachment,
                         )
                     elif action in ("capture", "ocr"):
                         if action == "ocr":
@@ -216,7 +229,7 @@ class DeliveryWorker(QThread):
                 try:
                     deliver(self.store, self.profile_id)
                     profile = self.profile
-                    if profile and profile.id == self.profile_id and self.store.has_ack_targets(profile.id) and time.monotonic() - self.last_poll >= profile.interval:
+                    if profile and profile.id == self.profile_id and self.store.has_ack_targets(profile.id) and time.monotonic() - self.last_poll >= min(5, max(1, profile.interval)):
                         self.last_poll = time.monotonic()
                         try:
                             poll_acknowledgements(self.store, profile)

@@ -564,16 +564,24 @@ class SettingsDialog(QDialog):
         self.alarm.setChecked(profile.local_alarm)
         layout.addRow("Camera / monitor index (screen 0 = all)", self.device)
         layout.addRow("Capture interval (s)", timing)
-        layout.addRow("Maximum reading age (s)", self.freshness)
+        layout.addRow("Mark variable data as stale (after s)", self.freshness)
         explanation = QLabel("Rules ignore readings older than this limit. Example: capture every 1 s, maximum age 3 s. This must be at least the capture interval.")
         explanation.setWordWrap(True)
         layout.addRow(explanation)
-        for label, widget in [("Telegram chat ID",self.chat),("Topic ID (optional)",self.topic),("New bot token",self.token),("Snapshots",self.attach),("Local alarm",self.alarm)]:
+        for label, widget in [("Telegram chat ID",self.chat),("Topic ID (optional)",self.topic)]:
             layout.addRow(label,widget)
         credentials=QHBoxLayout()
-        credentials.addWidget(button("View token after authentication",lambda: self.authenticate_token(False)))
-        credentials.addWidget(button("Copy token after authentication",lambda: self.authenticate_token(True)))
-        layout.addRow(credentials)
+        self.token.setMaximumWidth(320)
+        credentials.addWidget(self.token)
+        for title, copy_token in (("View", False), ("Copy", True)):
+            control = button(title, lambda checked=False, copy_token=copy_token: self.authenticate_token(copy_token))
+            control.setToolTip("Authenticate with your operating system to access the saved token")
+            control.setFixedWidth(64)
+            credentials.addWidget(control)
+        credentials.addStretch()
+        layout.addRow("Bot token", credentials)
+        layout.addRow("Snapshots", self.attach)
+        layout.addRow("Local alarm", self.alarm)
         self.revealed_token=QLineEdit()
         self.revealed_token.setReadOnly(True)
         self.revealed_token.hide()
@@ -1518,18 +1526,24 @@ class MainWindow(QMainWindow):
         choose_file(self, "Load profile", "JSON (*.json)", accepted)
 
     def refresh_history(self):
-        if self.pages.currentWidget() is not self.splitter:
-            return
         if not self.busy:
             self.worker.submit(
                 (self.revision, copy.deepcopy(self.profile), "history", None)
             )
 
     def show_history(self, revision, rows):
-        if self.pages.currentWidget() is not self.splitter:
-            return
         if revision != self.revision:
             return
+        if not hasattr(self, "event_log_states"):
+            self.event_log_states = {}
+        for row in reversed(rows):
+            state = (row["delivery"], row["acknowledged"], row["detail"])
+            if self.event_log_states.get(row["id"]) != state:
+                self.event_log_states[row["id"]] = state
+                level = "WARNING" if row["delivery"] in ("failed", "uncertain", "retrying") else "INFO"
+                self.log(level, f"{row['kind']} {row['id']}: {row['delivery']}"
+                         + (" · acknowledged" if row["acknowledged"] else "")
+                         + (f" · {row['detail']}" if row["detail"] else ""))
         self.history_rows = rows
         self.events.setRowCount(len(rows))
         for i, row in enumerate(rows):
@@ -1575,7 +1589,11 @@ class MainWindow(QMainWindow):
                 "Enable delivery on the main panel first.",
             )
             return
-        self.worker.submit((self.revision, copy.deepcopy(self.profile), "test", None))
+        frame = self.frame.copy() if self.frame is not None else None
+        if self.worker.submit((self.revision, copy.deepcopy(self.profile), "test", frame)):
+            self.log("INFO", "Test incident requested" + (" with snapshot" if self.profile.attach_snapshot else ""))
+        else:
+            self.log("WARNING", "Test incident not queued: monitor busy; try again")
 
     def retry(self):
         confirm(

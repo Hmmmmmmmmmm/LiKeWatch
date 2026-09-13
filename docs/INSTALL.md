@@ -1,8 +1,8 @@
 # Install LiKeWatch
 
 ## Windows 10/11 x64
-Download `LiKeWatch-0.1-Windows-x64-portable.exe` and launch it from a writable
-folder. No Python, Tesseract, administrator install, or separate OCR download is
+Download [LiKeWatch-0.2.0-Windows-x64-portable.exe](https://github.com/Hmmmmmmmmmm/LiKeWatch/releases/download/v0.2/LiKeWatch-0.2.0-Windows-x64-portable.exe) and double-click it.
+No installer or archive extraction is required. No Python, Tesseract, administrator install, or separate OCR download is
 needed. The single executable extracts its runtime to a temporary folder at
 launch. Profiles/history live in your local application-data directory.
 
@@ -10,7 +10,7 @@ The executable is not Authenticode-signed. Windows may show an unknown-publisher
 prompt. Check the release source and SHA-256 before choosing to run it.
 
 ## macOS 15 or newer, Apple Silicon
-Open `LiKeWatch-0.1-macOS-arm64.dmg`, drag LiKeWatch to Applications, then launch.
+Open `LiKeWatch-0.2.0-macOS-arm64.dmg`, drag LiKeWatch to Applications, then launch.
 This release is locally ad-hoc signed, not Apple Developer ID signed or notarized.
 If macOS blocks it, use System Settings → Privacy & Security → Open Anyway for
 the downloaded application you have verified. Do not disable Gatekeeper globally.

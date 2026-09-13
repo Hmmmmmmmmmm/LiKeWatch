@@ -1,5 +1,7 @@
 """Telegram delivery; no token appears in persisted profiles or error messages."""
 
+import json
+import re
 import httpx
 import keyring
 
@@ -30,6 +32,9 @@ def deliver(store, profile_id, client=None):
     payload = {"chat_id": row["chat"], "caption" if photo else "text": row["body"]}
     if row.get("rich"):
         payload["parse_mode"] = "HTML"
+    if row.get("incident") and row["kind"] in ("ALERT", "TEST"):
+        reply_markup = {"force_reply": True, "input_field_placeholder": "ACK to acknowledge this incident"}
+        payload["reply_markup"] = json.dumps(reply_markup) if photo else reply_markup
     options = {"data": payload, "files": {"photo": ("incident.jpg", photo, "image/jpeg")}} if photo else {"json": payload}
     if row["topic"]:
         payload["message_thread_id"] = int(row["topic"])
@@ -92,7 +97,7 @@ def deliver(store, profile_id, client=None):
 
 
 def poll_acknowledgements(store, profile, client=None):
-    """Only replies to accepted incident messages can acknowledge local incidents."""
+    """Match ACK replies, or a bare ACK with exactly one pending destination incident."""
     if not profile.delivery_enabled or not profile.chat_id:
         return
     token = keyring.get_password(SERVICE, profile.id)
@@ -109,11 +114,15 @@ def poll_acknowledgements(store, profile, client=None):
         for update in data.get('result', []):
             message = update.get('message', {})
             reply = message.get('reply_to_message', {})
-            if ('ACK' in message.get('text', '').upper()
+            if (re.match(r'^/?ACK(?:@\w+)?(?:\s|$)', message.get('text', '').strip(), re.IGNORECASE)
                     and str(message.get('chat', {}).get('id')) == profile.chat_id
                     and not message.get('from', {}).get('is_bot', False)):
-                store.ack_reply(profile.id, profile.chat_id,
-                    message.get('message_thread_id'), reply.get('message_id'))
+                if reply.get('message_id') is not None:
+                    store.ack_reply(profile.id, profile.chat_id,
+                        message.get('message_thread_id'), reply['message_id'])
+                else:
+                    store.ack_single_pending(profile.id, profile.chat_id,
+                        message.get('message_thread_id'), message.get('date', 0))
             # Advance only after the acknowledgement is durably applied.
             store.update_offset(profile.id, update['update_id'] + 1)
     if client is not None:

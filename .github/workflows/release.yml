@@ -41,9 +41,46 @@ jobs:
             dist/*.sha256
             dist/native-smoke.json
           if-no-files-found: error
+  windows-portability:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: LiKeWatch-Windows-x64
+          path: download
+      - name: Run downloaded EXE without external runtime configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifact = Get-ChildItem download/LiKeWatch-*-Windows-x64-portable.exe
+          if (@($artifact).Count -ne 1) { throw 'Expected one portable EXE' }
+          $expected = (Get-Content ($artifact.FullName + '.sha256')).Split(' ')[0]
+          if ((Get-FileHash $artifact.FullName -Algorithm SHA256).Hash -ne $expected) { throw 'Checksum mismatch' }
+          $portableDir = Join-Path $env:RUNNER_TEMP 'Portable app 测试'
+          New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+          $executable = Join-Path $portableDir $artifact.Name
+          Copy-Item $artifact.FullName $executable
+          $report = Join-Path $portableDir 'portability-smoke.json'
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          'PYTHONHOME', 'PYTHONPATH', 'TESSDATA_PREFIX', 'TESSERACT_CMD', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH' | ForEach-Object {
+            Remove-Item "Env:$_" -ErrorAction SilentlyContinue
+          }
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          $process = Start-Process -FilePath $executable -ArgumentList '--self-test', '--ui-stress', '--report', "`"$report`"" -WorkingDirectory $portableDir -PassThru
+          if (-not $process.WaitForExit(180000)) { $process.Kill(); throw 'Portable smoke test timed out' }
+          if ($process.ExitCode -ne 0) { throw "Portable EXE failed: $($process.ExitCode)" }
+          $result = Get-Content $report -Raw | ConvertFrom-Json
+          if ($result.status -ne 'passed' -or $result.gui -ne 'passed' -or ($result.values -join ',') -ne '83.2,18.4') { throw 'Portable OCR/GUI check failed' }
+          Copy-Item $report download/portability-smoke.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows-portability-report
+          path: download/portability-smoke.json
+          if-no-files-found: error
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, windows-portability]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -32,6 +32,7 @@ def test_photo_delivery_html_and_reply_ack(tmp_path,monkeypatch):
         assert b'parse_mode' in request.content and b'HTML' in request.content
         assert b'&lt;' in request.content and b'&amp;' in request.content
         assert b'incident.jpg' in request.content
+        assert b'force_reply' in request.content and b'input_field_placeholder' in request.content
         return httpx.Response(200,json={'ok':True,'result':{'message_id':42}})
     with httpx.Client(transport=httpx.MockTransport(send)) as client:
         deliver(store,p.id,client)
@@ -117,3 +118,23 @@ def test_startup_log_retention(tmp_path):
     prune_logs(tmp_path)
     assert 'old' not in log.read_text() and 'new' in log.read_text()
     assert not native.exists() and unrelated.exists()
+
+
+@pytest.mark.parametrize('text,count,age,expected', [('ACK',1,10,True),('/ack',1,10,True),('ACK',2,10,False),('ACK',1,-10,False),('BACK',1,10,False)])
+def test_bare_ack_is_unambiguous_and_not_old(tmp_path,monkeypatch,text,count,age,expected):
+    store,p=configured(tmp_path,monkeypatch)
+    now=int(time.time())
+    for i in range(count):
+        store.enqueue(p,'TEST','test',incident=f'test-{i}',now=now)
+        row=store.claim(p.id);store.delivered(row['seq'],'accepted',message_id=42+i)
+    response={'ok':True,'result':[{'update_id':1,'message':{'chat':{'id':123},'message_thread_id':7,'text':text,'date':now+age}}]}
+    with httpx.Client(transport=httpx.MockTransport(lambda _:httpx.Response(200,json=response))) as client:
+        poll_acknowledgements(store,p,client)
+    assert (not store.pending_alarms(p.id)) == expected
+
+
+def test_reply_ack_without_explicit_destination_topic(tmp_path,monkeypatch):
+    store,p=configured(tmp_path,monkeypatch);p.topic_id=''
+    store.enqueue(p,'TEST','test',incident='test')
+    row=store.claim(p.id);store.delivered(row['seq'],'accepted',message_id=42)
+    assert store.ack_reply(p.id,p.chat_id,1,42)
