@@ -13,6 +13,8 @@ class Store:
         self.path = str(path)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
+            if db.execute('PRAGMA user_version').fetchone()[0] > 1:
+                raise ValueError('Database schema requires a newer LiKeWatch version')
             db.executescript("""
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS incidents (
@@ -35,6 +37,7 @@ class Store:
                 if name not in columns:
                     db.execute(f"ALTER TABLE outbox ADD COLUMN {name} {kind}")
             db.execute("CREATE TABLE IF NOT EXISTS telegram_cursor (profile TEXT PRIMARY KEY, offset INTEGER)")
+            db.execute('PRAGMA user_version=1')
             # A process exit after send but before commit cannot prove remote delivery.
             db.execute(
                 "UPDATE outbox SET state='uncertain', detail='Interrupted during send; inspect Telegram before retrying' WHERE state='sending'"
@@ -49,6 +52,11 @@ class Store:
                 yield db
         finally:
             db.close()
+
+    def backup(self, destination):
+        """Consistent WAL-aware snapshot; never restore it automatically on rollback."""
+        with self.connection() as source, sqlite3.connect(destination) as target:
+            source.backup(target)
 
     def active(self, profile):
         with self.connection() as db:

@@ -31,6 +31,8 @@ class MonitorWorker(QThread):
         self.last_data = 0
 
     def submit(self, job):
+        if self.stopping.is_set():
+            return False
         try:
             self.jobs.put_nowait(job)
             return True
@@ -47,7 +49,7 @@ class MonitorWorker(QThread):
                 except queue.Empty:
                     continue
                 try:
-                    if revision != self.revision:
+                    if self.stopping.is_set() or revision != self.revision:
                         continue
                     if action == "snapshot":
                         try:
@@ -225,7 +227,8 @@ class DeliveryWorker(QThread):
 
     def run(self):
         while not self.stopping.wait(0.1):
-            if self.profile_id:
+            from .paths import context
+            if self.profile_id and not context().test_mode and not context().transaction:
                 try:
                     deliver(self.store, self.profile_id)
                     profile = self.profile

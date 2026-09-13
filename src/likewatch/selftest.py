@@ -8,7 +8,7 @@ from pathlib import Path
 from decimal import Decimal
 
 
-def run():
+def _run():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
     from .capture import demo_frame
@@ -104,7 +104,13 @@ def run():
             assert window.delivery.wait(15000)
             window.close()
             app.processEvents()
+        from .paths import context
         result = {
+            'source': str(context().source_root),
+            'commit': context().commit,
+            'environment_id': context().environment_id,
+            'python': __import__('sys').executable,
+            'ocr_child': engine.identity,
             "status": "passed",
             "engine": "Tesseract English",
             "values": [str(v) for v in values],
@@ -118,3 +124,19 @@ def run():
         print(json.dumps(result))
     finally:
         engine.close()
+
+
+def run():
+    """Exercise real OCR/GUI with every persistent store and external route isolated."""
+    from .paths import RuntimeContext, context, configure
+    previous = context()
+    with tempfile.TemporaryDirectory(prefix='likewatch-verification-') as directory:
+        root = Path(directory)
+        data = previous.export()
+        data.update(data_root=str(root / 'data'), settings_file=str(root / 'settings.ini'),
+                    log_root=str(root / 'logs'), test_mode=True)
+        configure(RuntimeContext.from_dict(data))
+        try:
+            _run()
+        finally:
+            configure(previous)

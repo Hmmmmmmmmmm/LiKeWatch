@@ -9,11 +9,17 @@ SERVICE = "LiKeWatch.Telegram"
 
 
 def save_token(profile_id, token):
+    from .paths import context
+    if context().test_mode:
+        return
     if token.strip():
         keyring.set_password(SERVICE, profile_id, token.strip())
 
 
 def deliver(store, profile_id, client=None):
+    from .paths import context
+    if context().test_mode and client is None:
+        return
     row = store.claim(profile_id)
     if row is None:
         return
@@ -98,6 +104,9 @@ def deliver(store, profile_id, client=None):
 
 def poll_acknowledgements(store, profile, client=None):
     """Match ACK replies, or a bare ACK with exactly one pending destination incident."""
+    from .paths import context
+    if context().test_mode and client is None:
+        return
     if not profile.delivery_enabled or not profile.chat_id:
         return
     token = keyring.get_password(SERVICE, profile.id)
