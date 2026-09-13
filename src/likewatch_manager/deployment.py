@@ -170,7 +170,7 @@ class Manager:
         folder = owned(self.root, 'state/transactions/' + transaction)
         plan = read_json(folder / 'plan.json')
         manifest, signed_digest = self.manifest(folder)
-        if plan['schema'] != 1 or plan['id'] != transaction or plan['generation'] != self.state()['generation'] or plan['candidate'] != self.deployment(manifest, signed_digest):
+        if plan['schema'] != 1 or plan['id'] != transaction or plan['generation'] != self.state()['generation'] or plan['candidate'] != self.deployment(manifest, signed_digest) or plan['sequence'] != manifest['sequence'] or manifest['sequence'] <= self.state()['highest_sequence']:
             raise ManagerError('Stale or altered update plan; prepare again')
         self.check_source(plan['candidate'])
         return plan

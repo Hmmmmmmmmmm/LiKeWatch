@@ -24,6 +24,8 @@ def main():
     work = Path(args.work).resolve(); signed = Path(args.signed_release).resolve()
     platform = platform_id()
     keys = read_json(signed / 'public-keys.json')
+    if not args.fixture and keys != read_json(ROOT / 'deployment/public-keys.json'):
+        raise RuntimeError('Production installer key differs from the pinned release authority')
     manifest = verify((signed / 'release-manifest.json').read_bytes(), (signed / 'release-manifest.sig').read_bytes(), keys)
     if subprocess.check_output(['git','rev-parse','HEAD'], cwd=ROOT, text=True).strip() != manifest['commit']:
         raise RuntimeError('Signed source commit differs from build checkout')

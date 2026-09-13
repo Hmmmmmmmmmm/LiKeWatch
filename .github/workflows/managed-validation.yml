@@ -27,6 +27,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Test source
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pip install '.[dev,manager]'
+          python -m pytest -q
       - uses: conda-incubator/setup-miniconda@v3
         with:
           miniforge-version: latest
@@ -34,12 +43,6 @@ jobs:
           auto-activate-base: true
       - name: Prepare private build tools
         run: conda install --yes --override-channels -c conda-forge python=3.13 constructor=3.16.1 cryptography packaging
-      - name: Test source
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          python -m pip install '.[dev,manager]'
-          python -m pytest -q
       - name: Resolve native payload
         run: python scripts/lock_environment.py --resolve --conda "$CONDA_EXE" --work "$RUNNER_TEMP/managed-build"
       - name: Sign local fixture
@@ -63,4 +66,6 @@ jobs:
             ${{ runner.temp }}/managed-build/*smoke.json
             ${{ runner.temp }}/managed-build/update-qualification.json
             ${{ runner.temp }}/managed-build/payload-metadata.json
+            ${{ runner.temp }}/managed-build/LiKeWatch-environment-*.tar.gz
           if-no-files-found: warn
+          retention-days: 14

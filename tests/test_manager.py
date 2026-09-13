@@ -162,3 +162,59 @@ def test_test_context_blocks_real_credentials(monkeypatch,tmp_path):
         poll_acknowledgements(None,demo_profile())
     finally:
         configure(previous)
+
+
+def test_streamed_payload_is_bounded_and_incomplete_files_are_removed(tmp_path, monkeypatch):
+    from likewatch_manager.releases import Releases
+    class Response(io.BytesIO):
+        def read(self, size=-1):
+            assert 0 < size <= 1024 * 1024
+            return super().read(size)
+    class Opener:
+        def open(self, *args, **kwargs):
+            return Response(b'x' * 2000000)
+    monkeypatch.setattr('urllib.request.build_opener', lambda *args: Opener())
+    destination = tmp_path / 'download.part'
+    client = Releases(tmp_path, [])
+    assert client.get('https://github.com/file', 2000000, destination) == 2000000
+    assert destination.stat().st_size == 2000000
+    with pytest.raises(ManagerError, match='expected size'):
+        client.get('https://github.com/file', 100, destination)
+    assert not destination.exists()
+
+
+def test_oversized_local_metadata_is_bounded(tmp_path):
+    from likewatch_manager.common import read_bytes
+    path = tmp_path / 'metadata'
+    path.write_bytes(b'x' * 65)
+    with pytest.raises(ManagerError, match='size limit'):
+        read_bytes(path, 64)
+
+
+def test_wheel_wrong_architecture_rejected():
+    lock = {'schema': 1, 'platform': 'win-64', 'python': '3.13.15',
+            'conda': [{'filename': 'python.conda', 'sha256': 'a' * 64}],
+            'wheels': [{'filename': 'example-1.0-cp313-cp313-macosx_15_0_arm64.whl', 'sha256': 'b' * 64}], 'native': []}
+    with pytest.raises(ManagerError, match='ABI'):
+        validate_lock(lock)
+
+
+def test_mismatched_trial_health_never_commits(tmp_path, monkeypatch):
+    from likewatch_manager import supervisor
+    from types import SimpleNamespace
+    class Process:
+        pid = 42
+        def poll(self): return None
+    context = dict(nonce='n', session='s', transaction='t', commit='a' * 40,
+                   environment_id='b' * 64, source_root=str(tmp_path / 'source'), health_file=str(tmp_path / 'health.json'))
+    atomic_json(context['health_file'], {'pid': 43, 'status': 'ready'})
+    manager = SimpleNamespace(root=tmp_path, config={'data_root': str(tmp_path / 'data')},
+        environments=SimpleNamespace(check=lambda _: None, prefix=lambda _: tmp_path),
+        compatible=lambda *a: None, context=lambda *a, **kw: (context, tmp_path / 'context.json'))
+    monkeypatch.setattr(supervisor.subprocess, 'Popen', lambda *a, **kw: Process())
+    stopped = []
+    monkeypatch.setattr(supervisor, 'stop_owned', lambda p: stopped.append(p.pid))
+    with pytest.raises(ManagerError, match='different process'):
+        supervisor.start(manager, {'environment_id': 'b' * 64})
+    assert stopped == [42]
+    assert not (tmp_path / 'state/deployment.json').exists()

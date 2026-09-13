@@ -113,7 +113,9 @@ class Environments:
         self.verify_files(folder, lock)
         explicit = folder / 'explicit-local.txt'
         explicit.write_text('@EXPLICIT\n' + '\n'.join((folder / 'conda' / r['filename']).as_uri() + '#' + r['sha256'] for r in lock['conda']) + '\n')
-        self.command([self.conda, 'create', '--yes', '--offline', '--no-default-packages', '--prefix', str(prefix), '--file', str(explicit)], scoped_environment(self.root))
+        env = scoped_environment(self.root)
+        env.update(CONDA_REGISTER_ENVS='false', CONDA_PKGS_DIRS=str(self.root / 'cache/packages'), CONDA_NO_PLUGINS='true', CONDA_SOLVER='classic')
+        self.command([self.conda, 'create', '--yes', '--offline', '--no-default-packages', '--prefix', str(prefix), '--file', str(explicit)], env)
         self.install_wheels(prefix, folder, lock)
         return prefix
 

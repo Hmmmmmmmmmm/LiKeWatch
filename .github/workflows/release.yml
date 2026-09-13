@@ -1,0 +1,147 @@
+name: Publish managed release
+on:
+  workflow_dispatch:
+    inputs:
+      qualification_run:
+        description: Successful managed qualification run ID for this exact commit
+        required: true
+      tag:
+        description: Stable release tag
+        default: v0.3
+        required: true
+      sequence:
+        description: Monotonically increasing release sequence
+        default: '1'
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require completed native qualification for the exact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.qualification_run }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > /tmp/qualification.json
+          python - <<'PY'
+          import json, os
+          run = json.load(open('/tmp/qualification.json'))
+          assert run['head_sha'] == os.environ['GITHUB_SHA']
+          assert run['conclusion'] == 'success'
+          assert run['path'] == '.github/workflows/managed-validation.yml'
+          assert run['head_repository']['full_name'] == os.environ['GITHUB_REPOSITORY']
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.qualification_run }}
+          github-token: ${{ github.token }}
+          path: qualified
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install cryptography==46.0.5 packaging==26.3
+      - name: Sign exact manifest with the pinned production authority
+        env:
+          SIGNING_KEY: ${{ secrets.LIKEWATCH_RELEASE_KEY }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_SEQUENCE: ${{ inputs.sequence }}
+        run: |
+          python - <<'PY'
+          import base64, json, os, subprocess
+          from pathlib import Path
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+          raw = base64.b64decode(os.environ['SIGNING_KEY'], validate=True)
+          key = Ed25519PrivateKey.from_private_bytes(raw)
+          public = base64.b64encode(key.public_key().public_bytes_raw()).decode()
+          assert public in json.loads(Path('deployment/public-keys.json').read_text())
+          path = Path(os.environ['RUNNER_TEMP']) / 'release.key'
+          try:
+              with path.open('xb') as output:
+                  path.chmod(0o600); output.write(raw)
+              subprocess.run(['python', 'scripts/release_manifest.py', '--output', 'signed', '--private-key', str(path), '--sequence', os.environ['RELEASE_SEQUENCE'], '--tag', os.environ['RELEASE_TAG'], '--payload', 'osx-arm64=qualified/managed-osx-arm64/payload-metadata.json', '--payload', 'win-64=qualified/managed-win-64/payload-metadata.json'], check=True)
+          finally:
+              path.unlink(missing_ok=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-release
+          path: signed/*
+  installers:
+    needs: sign
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: osx-arm64
+            constructor: bin/constructor
+          - os: windows-latest
+            platform: win-64
+            constructor: Scripts/constructor.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: ''
+          auto-activate-base: true
+      - run: conda install --yes --override-channels -c conda-forge python=3.13 constructor=3.16.1 cryptography packaging
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-release
+          path: ${{ runner.temp }}/signed
+      - uses: actions/download-artifact@v4
+        with:
+          name: managed-${{ matrix.platform }}
+          run-id: ${{ inputs.qualification_run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/qualified
+      - run: python scripts/restore_payload.py --artifact "$RUNNER_TEMP/qualified" --work "$RUNNER_TEMP/production-build"
+      - run: python scripts/build_installer.py --work "$RUNNER_TEMP/production-build" --signed-release "$RUNNER_TEMP/signed" --constructor "$CONDA/${{ matrix.constructor }}"
+      - name: Install and verify final production artifact offline
+        run: |
+          installer=$(find "$RUNNER_TEMP/production-build/installers" -type f \( -name '*.sh' -o -name '*.exe' \) | head -1)
+          python scripts/test_installer.py --installer "$installer" --prefix "$RUNNER_TEMP/LiKeWatchFinal" --report "$RUNNER_TEMP/production-build/installed-smoke.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/production-build/installers/*
+            ${{ runner.temp }}/production-build/LiKeWatch-environment-*.tar.gz
+            ${{ runner.temp }}/production-build/installed-smoke.json
+          if-no-files-found: error
+  publish:
+    needs: installers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: production-*
+          path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-release
+          path: signed
+      - name: Publish only after both final installers passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          mkdir publication
+          find artifacts -type f \( -name '*.exe' -o -name '*.sh' -o -name '*.tar.gz' \) -exec cp {} publication/ \;
+          cp signed/release-manifest.* publication/
+          (cd publication && sha256sum * > SHA256SUMS)
+          gh release create "$RELEASE_TAG" publication/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "LiKeWatch $RELEASE_TAG" --notes-file docs/RELEASE-v0.3.md

@@ -90,13 +90,35 @@ def main():
     second = command(git, 'rev-parse', 'HEAD', cwd=remote)
     command(git, 'tag', 'v0.3.992', cwd=remote)
     manifest.update(commit=second, version='0.3.992', tag='v0.3.992', sequence=manifest['sequence'] + 1)
+    # Repackage identical dependencies with another native resource to exercise
+    # a new environment identity and installation at its final prefix.
+    import shutil, tarfile
+    from likewatch_manager.environments import validate_lock
+    payload = work / 'changed-payload'
+    shutil.copytree(root / 'seed/payload', payload)
+    marker = payload / 'native/qualification-marker'
+    marker.parent.mkdir(exist_ok=True)
+    marker.write_text('Second immutable environment fixture\n')
+    lock = json.loads((payload / 'lock.json').read_text())
+    lock['native'].append({'filename': marker.name, 'sha256': file_hash(marker)})
+    identity = validate_lock(lock)
+    atomic_json(payload / 'lock.json', lock)
+    archive = folder / ('environment-' + identity + '.tar.gz')
+    with tarfile.open(archive, 'w:gz') as bundle:
+        for path in sorted(payload.rglob('*')):
+            if path.is_file():
+                bundle.add(path, arcname=str(path.relative_to(payload)))
+    manifest['platforms'][manager.platform] = {'environment_id': identity, 'lock_sha256': file_hash(payload / 'lock.json'),
+        'payload_name': archive.name, 'payload_sha256': file_hash(archive), 'payload_size': archive.stat().st_size, 'python': '3.13'}
     raw = canonical(manifest)
     (folder / 'release-manifest.json').write_bytes(raw); (folder / 'release-manifest.sig').write_bytes(key.sign(raw))
     second_plan = manager.prepare(); manager.validate_plan(second_plan['id'])
     assert run(manager, transaction=second_plan['id']) == 0
     assert manager.state()['active']['commit'] == second
+    assert manager.state()['active']['environment_id'] == identity
     assert run(manager, rollback=True) == 0
     assert manager.state()['active']['commit'] == commit
+    assert manager.state()['active']['environment_id'] == original['active']['environment_id']
     with sqlite3.connect(database) as db:
         assert db.execute('SELECT value FROM qualification_retained').fetchone()[0] == 'history/outbox fixture sentinel'
     updated = manager.state()
@@ -121,7 +143,7 @@ def main():
     manager.validate(updated['previous'])
     manager.compatible(updated['previous'], config['data_root'])
     report = {'status': 'passed', 'root': str(root), 'seed_commit': original['active']['commit'],
-              'candidate_commit': commit, 'environment_reused': True,
+              'candidate_commit': commit, 'environment_reused': True, 'environment_change_and_rollback': True,
               'checks': ['signed prepare', 'real spawned OCR validation', 'atomic activation',
                          'healthy Qt close without restart', 'previous source unchanged',
                          'stale plan rejected', 'failed validation leaves deployment unchanged',
