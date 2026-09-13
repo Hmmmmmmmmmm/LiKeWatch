@@ -12,7 +12,7 @@ Local platform: Apple Silicon, macOS; tested 2026-09-13. Production publication 
 - Actual rollback returns to the previous source/environment. Ordinary close exits without a restart loop. Stale plans and a deliberately failing candidate are rejected without switching the active deployment.
 - Two additional rollback launches preserve fixture profiles, event history, acknowledged incidents, pending outbox records and attempt counts, and Telegram polling offsets. Production data and credentials were not used.
 
-These are local qualification results, not a claim that all hardware or Windows scenarios passed. CI separately installs and tests native Windows and Mac artifacts, including the same GUI update and environment rollback sequence.
+Native Windows and Mac baseline qualification passed at commit `a6d80be` in [run 34763927994](https://github.com/Hmmmmmmmmmm/LiKeWatch/actions/runs/34763927994), including offline installation, generated launchers, real OCR, GUI updates, environment rollback, and operational-record preservation. Recovery improvements also passed locally. The release workflow still requires a successful native run for its exact final commit; hardware/account scenarios remain separate.
 
 ## Explicit limits and release gates
 

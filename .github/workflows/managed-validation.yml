@@ -76,3 +76,14 @@ jobs:
             ${{ runner.temp }}/managed-build/LiKeWatch-environment-*.tar.gz
           if-no-files-found: warn
           retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: managed-report-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/managed-build/locks/*.json
+            ${{ runner.temp }}/managed-build/*smoke.json
+            ${{ runner.temp }}/managed-build/update-qualification.json
+            ${{ runner.temp }}/managed-build/payload-metadata.json
+          if-no-files-found: warn
+          retention-days: 14
