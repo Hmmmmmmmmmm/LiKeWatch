@@ -9,7 +9,7 @@ use the same durable queue. OCR runs locally; outbound delivery is opt-in.
 
 Get the [**v0.2.1 release**](https://github.com/Hmmmmmmmmmm/LiKeWatch/releases/tag/v0.2.1): Windows x64 portable EXE or macOS
 15+ Apple Silicon DMG. Both include Python, Qt, Tesseract and English model data.
-See [installation and first run](docs/INSTALL.md). No signing credentials are
+The `codex/source-managed-v0.3` branch introduces private-runtime installers and signed source updates; see [v0.3 installation](docs/INSTALL.md) and [architecture](docs/DEPLOYMENT-ARCHITECTURE.md). No signing credentials are
 included; this release has unsigned Windows and ad-hoc-signed macOS binaries.
 
 ## Develop
@@ -19,7 +19,7 @@ Use Python 3.13 on the target OS:
 ```sh
 python -m venv .venv
 # Activate .venv using your shell's activation command.
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,manager]"
 python -m likewatch
 python -m pytest -q
 python -m likewatch --self-test

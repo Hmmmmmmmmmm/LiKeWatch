@@ -35,7 +35,7 @@ def main():
     git = str(root / manager.config['git'])
     def command(*argv, cwd=work):
         return subprocess.check_output(list(map(str, argv)), cwd=cwd, text=True).strip()
-    command(git, 'clone', '--no-hardlinks', args.source, remote)
+    command(git, 'clone', '--no-hardlinks', Path(args.source).resolve(), remote)
     command(git, 'config', 'user.name', 'LiKeWatch qualification', cwd=remote)
     command(git, 'config', 'user.email', 'fixture@example.invalid', cwd=remote)
     # Fixture-only auto-close: exercises healthy Qt shutdown without a production hook.

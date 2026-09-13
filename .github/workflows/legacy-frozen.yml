@@ -1,9 +1,5 @@
-name: Native build and release
+name: Legacy frozen build (manual only)
 on:
-  push:
-    tags: ['v*']
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,7 +21,7 @@ jobs:
           python-version: '3.13'
           cache: pip
       - name: Install native dependencies
-        run: python -m pip install ".[dev]"
+        run: python -m pip install ".[dev,manager]"
       - name: Unit and integration tests
         run: python -m pytest -q
       - name: Native application and embedded OCR smoke test
@@ -78,19 +74,3 @@ jobs:
           name: Windows-portability-report
           path: download/portability-smoke.json
           if-no-files-found: error
-  release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, windows-portability]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-      - name: Publish release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/*.exe artifacts/*.dmg artifacts/*.sha256 --verify-tag --title "LiKeWatch $GITHUB_REF_NAME" --notes-file "docs/RELEASE-${GITHUB_REF_NAME}.md"

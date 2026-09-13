@@ -1,0 +1,66 @@
+name: Managed native qualification
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: osx-arm64
+            python: bin/python
+            constructor: bin/constructor
+          - os: windows-latest
+            platform: win-64
+            python: python.exe
+            constructor: Scripts/constructor.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: ''
+          auto-activate-base: true
+      - name: Prepare private build tools
+        run: conda install --yes --override-channels -c conda-forge python=3.13 constructor=3.16.1 cryptography packaging
+      - name: Test source
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pip install '.[dev,manager]'
+          python -m pytest -q
+      - name: Resolve native payload
+        run: python scripts/lock_environment.py --resolve --conda "$CONDA_EXE" --work "$RUNNER_TEMP/managed-build"
+      - name: Sign local fixture
+        run: |
+          python -c "from pathlib import Path; from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey; import os; p=Path(os.environ['RUNNER_TEMP'])/'fixture.key'; p.write_bytes(Ed25519PrivateKey.generate().private_bytes_raw()); p.chmod(0o600)"
+          python scripts/release_manifest.py --output "$RUNNER_TEMP/signed" --payload '${{ matrix.platform }}'="$RUNNER_TEMP/managed-build/payload-metadata.json" --private-key "$RUNNER_TEMP/fixture.key" --sequence 1 --tag v0.3
+      - name: Build actual offline installer
+        run: python scripts/build_installer.py --fixture --work "$RUNNER_TEMP/managed-build" --signed-release "$RUNNER_TEMP/signed" --constructor "$CONDA/${{ matrix.constructor }}"
+      - name: Install offline and exercise generated launcher
+        run: |
+          installer=$(find "$RUNNER_TEMP/managed-build/installers" -type f \( -name '*.sh' -o -name '*.exe' \) | head -1)
+          python scripts/test_installer.py --installer "$installer" --prefix "$RUNNER_TEMP/LiKeWatch验证" --report "$RUNNER_TEMP/managed-build/installed-smoke.json"
+      - name: Signed source updates and rollback
+        run: '"$RUNNER_TEMP/LiKeWatch验证/${{ matrix.python }}" scripts/qualify_installation.py --root "$RUNNER_TEMP/LiKeWatch验证" --source "$GITHUB_WORKSPACE" --private-key "$RUNNER_TEMP/fixture.key" --report "$RUNNER_TEMP/managed-build/update-qualification.json"'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: managed-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/managed-build/locks/*.json
+            ${{ runner.temp }}/managed-build/*smoke.json
+            ${{ runner.temp }}/managed-build/update-qualification.json
+            ${{ runner.temp }}/managed-build/payload-metadata.json
+          if-no-files-found: warn

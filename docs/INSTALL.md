@@ -2,7 +2,7 @@
 
 ## Windows x64
 
-Run the constructor installer and choose a per-user local folder. It includes private Python, Git, Qt, and OCR dependencies. Start the installed `RunLiKeWatch.cmd`. Do not move the installation after setup; reinstall at a new prefix if needed. The old v0.2 portable EXE remains a separate legacy distribution.
+Run the constructor installer and choose a per-user local folder without spaces in its full path. It includes private Python, Git, Qt, and OCR dependencies. Start the installed `RunLiKeWatch.cmd`. Do not move the installation after setup; reinstall at a new prefix if needed. The old v0.2 portable EXE remains a separate legacy distribution.
 
 ## macOS 15+ Apple Silicon
 
@@ -13,7 +13,7 @@ bash LiKeWatch-0.3.0-MacOSX-arm64.sh -b -p "$HOME/LiKeWatch"
 "$HOME/LiKeWatch/RunLiKeWatch.command"
 ```
 
-Use the actual downloaded filename. The setup prepares its private environments, installs bundled wheels offline, verifies source, and runs isolated real-OCR tests before marking installation complete. It does not initialize the user's shell, change system PATH, register a default Python, or activate an unrelated environment.
+Use the actual downloaded filename. The complete installation path must not contain spaces; the conda maintenance runtime does not support them. Unicode paths without spaces passed local Mac qualification. The setup prepares its private environments, installs bundled wheels offline, verifies source, and runs isolated real-OCR tests before marking installation complete. It does not initialize the user's shell, change system PATH, register a default Python, or activate an unrelated environment.
 
 A script launch does not bypass macOS camera/screen/keychain authorization. Permissions may be attributed differently from the old frozen application. Native hardware and permission qualification is separate from offscreen CI. The authentication helper is precompiled; no Swift compiler is needed by the installed app.
 

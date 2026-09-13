@@ -42,9 +42,13 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--conda', required=True)
     p.add_argument('--work', required=True)
+    p.add_argument('--resolve', action='store_true', help='Explicitly resolve and emit a new dependency lock')
+    p.add_argument('--lock-output', help='Destination for new locks; defaults to work/locks')
     args = p.parse_args()
     work = Path(args.work).resolve(); work.mkdir(parents=True, exist_ok=True)
     platform = platform_id()
+    if not args.resolve:
+        p.error('Use --resolve only for an intentional dependency release; source-only releases reuse a published payload')
     base, app = work / 'maintenance', work / 'app-python'
     for prefix, specs in ((base, ['python=3.13.15', 'conda=26.7.2', 'git=2.55.0', 'cryptography=46.0.5', 'packaging=26.3', 'platformdirs=4.11.8']), (app, ['python=3.13.15', 'pip=26.2.1'])):
         if not prefix.exists():
@@ -70,7 +74,8 @@ def main():
     lock = {'schema': 1, 'platform': platform, 'python': '3.13.15', 'conda': conda_records, 'wheels': wheel_records, 'native': native_records}
     identity = validate_lock(lock)
     atomic_json(payload / 'lock.json', lock)
-    locks = ROOT / 'deployment/locks'; locks.mkdir(exist_ok=True)
+    locks = Path(args.lock_output).resolve() if args.lock_output else work / 'locks'
+    locks.mkdir(parents=True, exist_ok=True)
     atomic_json(locks / (platform + '.json'), lock)
     atomic_json(locks / (platform + '-maintenance.json'), {'schema': 1, 'platform': platform, 'conda': maintenance})
     # Explicit files are build inputs; users never solve a package spec.
