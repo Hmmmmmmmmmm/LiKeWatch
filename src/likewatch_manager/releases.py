@@ -5,7 +5,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from .common import ManagerError, atomic_json, read_json, file_hash
+from .common import read_bytes, ManagerError, atomic_json, read_json, file_hash
 from .trust import verify, REPOSITORY
 
 
@@ -26,7 +26,7 @@ class Releases:
     def __init__(self, root, keys):
         self.root, self.keys = Path(root), keys
 
-    def get(self, url, limit=1_000_000):
+    def get(self, url, limit=1_000_000, destination=None):
         allowed(url)
         cooldown = self.root / 'state/network.json'
         if cooldown.exists() and read_json(cooldown).get('retry_after', 0) > time.time():
@@ -34,6 +34,19 @@ class Releases:
         request = urllib.request.Request(url, headers={'User-Agent': 'LiKeWatch-manager/1', 'Accept': 'application/vnd.github+json'})
         try:
             with urllib.request.build_opener(Redirects()).open(request, timeout=30) as response:
+                if destination is not None:
+                    total = 0
+                    try:
+                        with Path(destination).open('wb') as output:
+                            while chunk := response.read(min(1024 * 1024, limit - total + 1)):
+                                total += len(chunk)
+                                if total > limit:
+                                    raise ManagerError('Download exceeds expected size')
+                                output.write(chunk)
+                        return total
+                    except BaseException:
+                        Path(destination).unlink(missing_ok=True)
+                        raise
                 raw = response.read(limit + 1)
                 if len(raw) > limit:
                     raise ManagerError('Download exceeds expected size')
@@ -77,10 +90,10 @@ class Releases:
             assets = read_json(folder / 'assets.json')
             if metadata['payload_name'] not in assets:
                 raise ManagerError('Environment payload is not published')
-            raw = self.get(assets[metadata['payload_name']], metadata['payload_size'])
             temporary = destination.with_suffix('.part')
-            temporary.write_bytes(raw)
-            if len(raw) != metadata['payload_size'] or file_hash(temporary) != metadata['payload_sha256']:
+            size = self.get(assets[metadata['payload_name']], metadata['payload_size'], temporary)
+            if size != metadata['payload_size'] or file_hash(temporary) != metadata['payload_sha256']:
+                temporary.unlink(missing_ok=True)
                 raise ManagerError('Environment payload failed integrity verification')
             temporary.replace(destination)
         return destination
@@ -92,6 +105,6 @@ class FixtureReleases:
         self.folder, self.keys = Path(folder), keys
 
     def check(self):
-        raw = (self.folder / 'release-manifest.json').read_bytes()
-        signature = (self.folder / 'release-manifest.sig').read_bytes()
+        raw = read_bytes(self.folder / 'release-manifest.json')
+        signature = read_bytes(self.folder / 'release-manifest.sig', 64)
         return verify(raw, signature, self.keys), self.folder

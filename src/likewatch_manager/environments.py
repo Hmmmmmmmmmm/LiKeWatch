@@ -21,6 +21,18 @@ def validate_lock(lock):
             seen.add(filename)
     if not lock['conda'] or not lock['wheels']:
         raise ManagerError('Environment lock is incomplete')
+    from packaging.utils import parse_wheel_filename, InvalidWheelFilename
+    for record in lock['wheels']:
+        try:
+            _, _, _, tags = parse_wheel_filename(record['filename'])
+        except InvalidWheelFilename:
+            raise ManagerError('Invalid locked wheel filename') from None
+        def supported(tag):
+            python = tag.interpreter in ('py3', 'py2.py3', 'cp313') or (tag.abi == 'abi3' and tag.interpreter.startswith('cp3') and tag.interpreter[3:].isdigit() and int(tag.interpreter[3:]) <= 13)
+            platform = tag.platform == 'any' or (lock['platform'] == 'win-64' and tag.platform == 'win_amd64') or (lock['platform'] == 'osx-arm64' and tag.platform.startswith('macosx_') and tag.platform.endswith(('_arm64', '_universal2')))
+            return python and platform and tag.abi in ('none', 'abi3', 'cp313')
+        if not any(supported(tag) for tag in tags):
+            raise ManagerError('Locked wheel ABI does not match the private Python/platform')
     return digest(canonical(lock))
 
 
@@ -70,10 +82,19 @@ class Environments:
         lock = read_json(prefix / 'likewatch-environment.json')
         if validate_lock(lock) != identity or not interpreter(prefix).is_file():
             raise ManagerError('Application environment is missing or incomplete')
+        self.check_conda(prefix, lock)
         for item in lock['native']:
             if file_hash(prefix / 'native' / item['filename']) != item['sha256']:
                 raise ManagerError('Native helper is damaged; repair the environment')
         return prefix
+
+    @staticmethod
+    def check_conda(prefix, lock):
+        records = [read_json(path) for path in (Path(prefix) / 'conda-meta').glob('*.json')]
+        actual = {r['name']: (r['version'], r['build'], r.get('sha256')) for r in records}
+        expected = {r['name']: (r['version'], r['build'], r['sha256']) for r in lock['conda']}
+        if actual != expected:
+            raise ManagerError('Installed conda inventory disagrees with the environment lock')
 
     def create(self, payload, metadata, platform):
         identity = metadata['environment_id']
@@ -92,7 +113,7 @@ class Environments:
         self.verify_files(folder, lock)
         explicit = folder / 'explicit-local.txt'
         explicit.write_text('@EXPLICIT\n' + '\n'.join((folder / 'conda' / r['filename']).as_uri() + '#' + r['sha256'] for r in lock['conda']) + '\n')
-        self.command([self.conda, 'create', '--yes', '--offline', '--no-default-packages', '--prefix', str(prefix), '--file', str(explicit)])
+        self.command([self.conda, 'create', '--yes', '--offline', '--no-default-packages', '--prefix', str(prefix), '--file', str(explicit)], scoped_environment(self.root))
         self.install_wheels(prefix, folder, lock)
         return prefix
 
@@ -115,6 +136,7 @@ class Environments:
 
     def install_wheels(self, prefix, folder, lock):
         import shutil
+        self.check_conda(prefix, lock)
         requirements = Path(folder) / 'requirements.txt'
         requirements.write_text('\n'.join(f"{r['name']}=={r['version']} --hash=sha256:{r['sha256']}" for r in lock['wheels']) + '\n')
         self.command([str(interpreter(prefix)), '-I', '-m', 'pip', 'install', '--no-index', '--no-deps', '--require-hashes', '--find-links', str(Path(folder) / 'wheels'), '-r', str(requirements)], scoped_environment(prefix))

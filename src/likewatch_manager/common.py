@@ -13,12 +13,16 @@ class ManagerError(RuntimeError):
     pass
 
 
-def read_json(path, limit=1_000_000):
+def read_bytes(path, limit=1_000_000):
     with Path(path).open('rb') as stream:
         raw = stream.read(limit + 1)
     if len(raw) > limit:
         raise ManagerError('Metadata exceeds size limit')
-    return json.loads(raw)
+    return raw
+
+
+def read_json(path, limit=1_000_000):
+    return json.loads(read_bytes(path, limit))
 
 
 def canonical(data):

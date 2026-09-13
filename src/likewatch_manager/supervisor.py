@@ -90,6 +90,13 @@ def activate(manager, plan):
 
 def run(manager, arguments=(), transaction=None, rollback=False):
     with locked(manager.root / 'state/run.lock'):
+        if '--self-test' in arguments:
+            deployment = manager.state()['active']
+            value, context_file = manager.context(deployment, test=True)
+            prefix = manager.environments.check(deployment['environment_id'])
+            env = scoped_environment(prefix, value)
+            env['QT_QPA_PLATFORM'] = 'offscreen'
+            return subprocess.run([str(interpreter(prefix)), '-I', '-B', str(manager.root / 'manager/runner.py'), str(context_file), *arguments], env=env, cwd=context_file.parent, timeout=180).returncode
         if rollback:
             with locked(manager.root / 'state/update.lock'):
                 state = manager.state()

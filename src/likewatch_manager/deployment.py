@@ -9,7 +9,7 @@ import time
 import tomllib
 import uuid
 from packaging.version import Version
-from .common import ManagerError, atomic_json, digest, file_hash, identifier, locked, owned, read_json, platform_id
+from .common import read_bytes, ManagerError, atomic_json, digest, file_hash, identifier, locked, owned, read_json, platform_id
 from .environments import Environments, interpreter, scoped_environment
 from .gitstore import GitStore
 from .releases import Releases
@@ -48,8 +48,8 @@ class Manager:
 
     def manifest(self, folder, fresh=True):
         folder = Path(folder)
-        raw = (folder / 'release-manifest.json').read_bytes()
-        signature = (folder / 'release-manifest.sig').read_bytes()
+        raw = read_bytes(folder / 'release-manifest.json')
+        signature = read_bytes(folder / 'release-manifest.sig', 64)
         return verify(raw, signature, self.keys, fresh=fresh), digest(raw)
 
     def deployment(self, manifest, digest_value):
@@ -94,7 +94,8 @@ class Manager:
         if data_root:
             value['data_root'] = str(Path(data_root).resolve())
         if test:
-            value.update(data_root=str(directory / 'test-data'), settings_file=str(directory / 'settings.ini'), log_root=str(directory / 'logs'))
+            sandbox = Path(data_root).resolve() if data_root else directory / 'test-data'
+            value.update(data_root=str(sandbox), settings_file=str(sandbox / 'settings.ini'), log_root=str(directory / 'logs'))
         atomic_json(directory / 'context.json', value)
         return value, directory / 'context.json'
 
@@ -104,7 +105,10 @@ class Manager:
         report = context_file.parent / 'validation.json'
         env = scoped_environment(prefix, value)
         env['QT_QPA_PLATFORM'] = 'offscreen'
-        result = subprocess.run([str(interpreter(prefix)), '-I', '-B', str(self.root / 'manager/runner.py'), str(context_file), '--self-test', '--ui-stress', '--report', str(report)], env=env, cwd=context_file.parent, capture_output=True, timeout=180)
+        try:
+            result = subprocess.run([str(interpreter(prefix)), '-I', '-B', str(self.root / 'manager/runner.py'), str(context_file), '--self-test', '--ui-stress', '--report', str(report)], env=env, cwd=context_file.parent, capture_output=True, timeout=180)
+        except subprocess.TimeoutExpired:
+            raise ManagerError('Candidate validation timed out; active version is unchanged') from None
         (context_file.parent / 'validation.log').write_bytes(result.stdout + result.stderr)
         if result.returncode or not report.exists():
             raise ManagerError('Candidate OCR/GUI validation failed; active version is unchanged')

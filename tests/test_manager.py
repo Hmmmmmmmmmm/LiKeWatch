@@ -127,3 +127,38 @@ def test_sqlite_backup_preserves_history_and_offsets(tmp_path):
 def test_manager_imports_no_application_stack():
     result=subprocess.run([os.sys.executable,'-c', "import likewatch_manager.deployment,sys;assert not any(n in sys.modules for n in ('likewatch','PySide6','cv2','numpy','tesserocr','keyring'))"],capture_output=True,text=True)
     assert result.returncode==0,result.stderr
+
+
+def test_network_allowlist_rejects_credentials_and_other_origins():
+    from likewatch_manager.releases import allowed
+    for url in ('http://github.com/file', 'https://user:secret@github.com/file', 'https://evil.example/file', 'file:///tmp/file'):
+        with pytest.raises(ManagerError): allowed(url)
+    allowed('https://github.com/Hmmmmmmmmmm/LiKeWatch/releases/download/v0.3/release-manifest.json')
+
+
+def test_future_database_is_not_mutated(tmp_path):
+    from likewatch.storage import Store
+    import sqlite3
+    path=tmp_path/'new.sqlite3'
+    with sqlite3.connect(path) as db:
+        db.execute('PRAGMA user_version=999')
+    before=path.read_bytes()
+    with pytest.raises(ValueError,match='newer'): Store(path)
+    assert path.read_bytes()==before
+
+
+def test_test_context_blocks_real_credentials(monkeypatch,tmp_path):
+    from likewatch.paths import RuntimeContext,context,configure
+    from likewatch.messaging import deliver,poll_acknowledgements,save_token
+    from likewatch.profiles import demo_profile
+    previous=context()
+    def forbidden(*args): raise AssertionError('Production keyring accessed')
+    monkeypatch.setattr('keyring.get_password',forbidden)
+    monkeypatch.setattr('keyring.set_password',forbidden)
+    try:
+        configure(RuntimeContext(test_mode=True))
+        save_token('profile','fake')
+        deliver(None,'profile')
+        poll_acknowledgements(None,demo_profile())
+    finally:
+        configure(previous)
