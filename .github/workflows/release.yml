@@ -62,6 +62,7 @@ jobs:
               assert smoke['commit'] == updates['seed_commit'] == os.environ['GITHUB_SHA']
               assert updates['environment_change_and_rollback'] is True
               assert updates['offline_environment_repair'] is True
+              assert updates['supervisor_death_closes_app'] is True
           raw = base64.b64decode(os.environ['SIGNING_KEY'], validate=True)
           key = Ed25519PrivateKey.from_private_bytes(raw)
           public = base64.b64encode(key.public_key().public_bytes_raw()).decode()
