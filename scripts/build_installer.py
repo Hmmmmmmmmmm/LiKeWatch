@@ -1,6 +1,8 @@
 """Assemble constructor installer from existing exact locks and signed offline seed."""
 import argparse
 import json
+import os
+import uuid
 from pathlib import Path
 import shutil
 import subprocess
@@ -27,7 +29,7 @@ def main():
         raise RuntimeError('Signed source commit differs from build checkout')
     if subprocess.check_output(['git','status','--porcelain'], cwd=ROOT, text=True).strip():
         raise RuntimeError('Commit all intended source changes before building the signed installer')
-    stage = work / ('constructor-fixture' if args.fixture else 'constructor-release')
+    stage = work / (('constructor-fixture-' if args.fixture else 'constructor-release-') + uuid.uuid4().hex[:8])
     if stage.exists():
         raise RuntimeError('Use a fresh installer staging directory')
     stage.mkdir(parents=True)
@@ -74,7 +76,12 @@ def main():
               'post_install': str(ROOT / ('packaging/constructor/post_install.bat' if platform == 'win-64' else 'packaging/constructor/post_install.sh'))}
     # JSON is a YAML subset; it preserves exact paths without manual quoting.
     (stage / 'construct.yaml').write_text(json.dumps(recipe, indent=2))
-    subprocess.run([args.constructor, str(stage), '--output-dir', str(work / 'installers')], check=True)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('CONDA', 'PYTHON'))}
+    tool_prefix = Path(args.constructor).resolve().parents[1]
+    env['CONDA_EXE'] = str(tool_prefix / ('Scripts/conda.exe' if platform == 'win-64' else 'bin/conda'))
+    env['CONDARC'] = str(stage / 'condarc')
+    (stage / 'condarc').write_text('channels: [conda-forge]\nregister_envs: false\n')
+    subprocess.run([args.constructor, str(stage), '--cache-dir', str(work / 'constructor-cache'), '--output-dir', str(work / 'installers')], check=True, env=env)
 
 
 if __name__ == '__main__':

@@ -91,7 +91,7 @@ class Environments:
             raise ManagerError('Environment identity or platform mismatch')
         self.verify_files(folder, lock)
         explicit = folder / 'explicit-local.txt'
-        explicit.write_text('@EXPLICIT\n' + '\n'.join((folder / 'conda' / r['filename']).as_uri() + '#sha256=' + r['sha256'] for r in lock['conda']) + '\n')
+        explicit.write_text('@EXPLICIT\n' + '\n'.join((folder / 'conda' / r['filename']).as_uri() + '#' + r['sha256'] for r in lock['conda']) + '\n')
         self.command([self.conda, 'create', '--yes', '--offline', '--no-default-packages', '--prefix', str(prefix), '--file', str(explicit)])
         self.install_wheels(prefix, folder, lock)
         return prefix

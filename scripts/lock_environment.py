@@ -75,7 +75,7 @@ def main():
     atomic_json(locks / (platform + '-maintenance.json'), {'schema': 1, 'platform': platform, 'conda': maintenance})
     # Explicit files are build inputs; users never solve a package spec.
     for name, recs in (('app', conda_records), ('maintenance', maintenance)):
-        (work / (name + '-explicit.txt')).write_text('@EXPLICIT\n' + '\n'.join(r['url'] + '#sha256=' + r['sha256'] for r in recs) + '\n')
+        (work / (name + '-explicit.txt')).write_text('@EXPLICIT\n' + '\n'.join(r['url'] + '#' + r['sha256'] for r in recs) + '\n')
     archive = work / f'LiKeWatch-environment-{platform}-{identity}.tar.gz'
     with tarfile.open(archive, 'w:gz') as tar:
         for path in sorted(payload.rglob('*')):
