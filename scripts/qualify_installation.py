@@ -40,7 +40,27 @@ def main():
     command(git, 'config', 'user.email', 'fixture@example.invalid', cwd=remote)
     # Fixture-only auto-close: exercises healthy Qt shutdown without a production hook.
     entry = remote / 'src/likewatch/__main__.py'
-    entry.write_text(entry.read_text().replace('    return app.exec()', '    QTimer.singleShot(3000, window.close)\n    return app.exec()'))
+    hook = """    from pathlib import Path
+    request = Path(current.data_root) / 'qualification-gui-update'
+    if request.exists():
+        request.unlink()
+        from .updates import UpdatesDialog
+        from .ui import present
+        dialog = UpdatesDialog(window)
+        present(window, dialog)
+        poll = QTimer(window)
+        def finish_update():
+            if dialog.restart.isEnabled():
+                poll.stop()
+                dialog.restart_update()
+        poll.timeout.connect(finish_update)
+        poll.start(100)
+        QTimer.singleShot(0, dialog.prepare_update)
+        QTimer.singleShot(240000, window.close)
+    else:
+        QTimer.singleShot(3000, window.close)
+    return app.exec()"""
+    entry.write_text(entry.read_text().replace('    return app.exec()', hook))
     original = manager.state()
     version = '0.3.991'
     app = remote / 'deployment/app.toml'
@@ -112,8 +132,8 @@ def main():
         'payload_name': archive.name, 'payload_sha256': file_hash(archive), 'payload_size': archive.stat().st_size, 'python': '3.13'}
     raw = canonical(manifest)
     (folder / 'release-manifest.json').write_bytes(raw); (folder / 'release-manifest.sig').write_bytes(key.sign(raw))
-    second_plan = manager.prepare(); manager.validate_plan(second_plan['id'])
-    assert run(manager, transaction=second_plan['id']) == 0
+    (Path(config['data_root']) / 'qualification-gui-update').write_text('Request fixture update through the real GUI adapter')
+    assert run(manager) == 0
     assert manager.state()['active']['commit'] == second
     assert manager.state()['active']['environment_id'] == identity
     assert run(manager, rollback=True) == 0
@@ -143,11 +163,11 @@ def main():
     manager.validate(updated['previous'])
     manager.compatible(updated['previous'], config['data_root'])
     report = {'status': 'passed', 'root': str(root), 'seed_commit': original['active']['commit'],
-              'candidate_commit': commit, 'environment_reused': True, 'environment_change_and_rollback': True,
+              'candidate_commit': commit, 'environment_reused': True, 'environment_change_and_rollback': True, 'gui_update_restart': True,
               'checks': ['signed prepare', 'real spawned OCR validation', 'atomic activation',
                          'healthy Qt close without restart', 'previous source unchanged',
                          'stale plan rejected', 'failed validation leaves deployment unchanged',
-                         'actual rollback with healthy Qt shutdown', 'operational database sentinel preserved'],
+                         'GUI manager process and cooperative restart', 'actual rollback with healthy Qt shutdown', 'operational database sentinel preserved'],
               'work': str(work)}
     atomic_json(args.report, report)
     print(json.dumps(report))

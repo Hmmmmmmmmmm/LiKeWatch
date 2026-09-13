@@ -1,7 +1,8 @@
 """Thin asynchronous GUI adapter; all deployment operations live in the manager."""
 import json
+import os
 from pathlib import Path
-from PySide6.QtCore import QProcess
+from PySide6.QtCore import QProcess, QProcessEnvironment
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
 from . import __version__
 
@@ -52,6 +53,17 @@ class UpdatesDialog(QDialog):
         arguments = ['-I', '-B', str(Path(context.install_root) / 'manager/manager.py'), '--root', context.install_root, operation]
         if target:
             arguments.append(target)
+        # The app and maintenance interpreter have independent DLL/runtime paths.
+        environment = QProcessEnvironment.systemEnvironment()
+        for name in environment.keys():
+            if name.startswith(('PYTHON', 'CONDA', 'QT_', 'LIKEWATCH', 'TESSDATA')) or name == 'TESSERACT_CMD':
+                environment.remove(name)
+        root = Path(context.install_root)
+        paths = ([root, root / 'Library/bin', root / 'Scripts', Path(os.environ['SystemRoot']) / 'System32', Path(os.environ['SystemRoot'])]
+                 if os.name == 'nt' else [root / 'bin', Path('/usr/bin'), Path('/bin')])
+        environment.insert('PATH', os.pathsep.join(map(str, paths)))
+        environment.insert('PYTHONNOUSERSITE', '1')
+        self.process.setProcessEnvironment(environment)
         self.process.start(context.manager_python, arguments)
 
     def prepare_update(self):
