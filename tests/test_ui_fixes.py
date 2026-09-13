@@ -40,6 +40,8 @@ def window(app, tmp_path, monkeypatch):
 
     monkeypatch.setattr("likewatch.runtime.OcrSupervisor", FakeOcr)
     monkeypatch.setattr("likewatch.runtime.Capture.read", lambda *_: demo_frame())
+    from likewatch.profiles import demo_profile, save
+    save(demo_profile(), tmp_path / "last-profile.json")
     view = MainWindow(tmp_path)
     view.show()
     wait(app, lambda: view.worker.jobs.empty())
@@ -394,3 +396,63 @@ def test_test_send_busy_is_visible(window,monkeypatch):
     monkeypatch.setattr(window.worker,'submit',lambda *_:False)
     window.test_send()
     assert 'Test incident not queued' in window.logs.toPlainText()
+
+
+def test_wheel_zoom_crosses_fit_and_survives_resize(window, app):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtGui import QWheelEvent
+
+    window.image.reset_zoom()
+    initial = window.image.transform().m11()
+    for _ in range(12):
+        event = QWheelEvent(QPointF(100, 100), QPointF(100, 100), QPoint(),
+                            QPoint(0, 120), Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+        QApplication.sendEvent(window.image.viewport(), event)
+        app.processEvents()
+    enlarged = window.image.transform().m11()
+    assert enlarged > initial * 3
+    assert window.zoom_control.value() == pytest.approx(enlarged * 100, abs=0.1)
+    window.resize(1250, 850)
+    app.processEvents()
+    assert window.image.transform().m11() == pytest.approx(enlarged)
+    window.zoom_control.setValue(250)
+    app.processEvents()
+    assert window.image.transform().m11() == pytest.approx(2.5)
+    window.image.reset_zoom()
+    app.processEvents()
+    assert window.image.transform().m11() < enlarged
+    assert window.image.fit_mode
+
+
+def test_corner_editing_defaults_and_capture_preference(window, app):
+    assert window.edit_geometry.isChecked()
+    assert len(window.image.handles) == 4
+    window.snapshot()
+    wait(app, lambda: not window.busy)
+    assert window.edit_geometry.isChecked() and window.image.editable
+    assert len(window.image.handles) == 4
+    window.trigger_ocr()
+    assert all(not handle.isEnabled() for handle in window.image.handles)
+    wait(app, lambda: not window.busy)
+    assert window.edit_geometry.isChecked() and window.image.editable
+    window.edit_geometry.setChecked(False)
+    window.snapshot()
+    wait(app, lambda: not window.busy)
+    assert not window.edit_geometry.isChecked()
+
+
+def test_fresh_profile_is_empty(app, tmp_path, monkeypatch):
+    view = MainWindow(tmp_path)
+    try:
+        assert view.profile.regions == [] and view.profile.rules == []
+        assert view.variables.rowCount() == 0 and view.rule_list.rowCount() == 0
+        assert view.edit_geometry.isChecked()
+        assert not view.ocr_button.isEnabled()
+    finally:
+        view.worker.stopping.set()
+        view.delivery.stopping.set()
+        assert view.worker.wait(5000)
+        assert view.delivery.wait(5000)
+        view.close()
+        app.processEvents()

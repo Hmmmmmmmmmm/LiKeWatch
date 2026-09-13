@@ -1,7 +1,7 @@
 # Install LiKeWatch
 
 ## Windows 10/11 x64
-Download [LiKeWatch-0.2.0-Windows-x64-portable.exe](https://github.com/Hmmmmmmmmmm/LiKeWatch/releases/download/v0.2/LiKeWatch-0.2.0-Windows-x64-portable.exe) and double-click it.
+Download [LiKeWatch-0.2.1-Windows-x64-portable.exe](https://github.com/Hmmmmmmmmmm/LiKeWatch/releases/download/v0.2.1/LiKeWatch-0.2.1-Windows-x64-portable.exe) and double-click it.
 No installer or archive extraction is required. No Python, Tesseract, administrator install, or separate OCR download is
 needed. The single executable extracts its runtime to a temporary folder at
 launch. Profiles/history live in your local application-data directory.
@@ -10,7 +10,7 @@ The executable is not Authenticode-signed. Windows may show an unknown-publisher
 prompt. Check the release source and SHA-256 before choosing to run it.
 
 ## macOS 15 or newer, Apple Silicon
-Open `LiKeWatch-0.2.0-macOS-arm64.dmg`, drag LiKeWatch to Applications, then launch.
+Open `LiKeWatch-0.2.1-macOS-arm64.dmg`, drag LiKeWatch to Applications, then launch.
 This release is locally ad-hoc signed, not Apple Developer ID signed or notarized.
 If macOS blocks it, use System Settings → Privacy & Security → Open Anyway for
 the downloaded application you have verified. Do not disable Gatekeeper globally.
@@ -24,12 +24,14 @@ not in a cloud-synced folder. When upgrading, replace the old Applications copy
 and point launchers to the updated app so an older version is not opened by mistake.
 
 ## First run
-1. Choose **Snapshot** in Demo mode, then **Trigger OCR on still image**.
-   The two demo readings should be 83.2 and 18.4.
+1. New profiles start with no regions and no rules. Saved profiles are restored.
+   Choose **Snapshot** to freeze the selected source before adding regions.
 2. Choose camera, screen, or Open image. Set the camera/monitor index in Settings.
 3. Take a snapshot, then **+ Region**. Click top-left, top-right, bottom-right,
    bottom-left. Choose number/text, unit, confidence threshold and preprocessing.
-4. Select **Edit corners on frozen frame** to drag the selected region's handles.
+4. **Edit corners on frozen frame** is enabled by default. Drag the selected region's handles.
+   Use the mouse wheel or the **Zoom** percentage beside **Reset zoom** to magnify
+   beyond fit-to-frame; drag the image to pan. Reset zoom fits the image again.
    Clicking a variable selects its region with a thicker border at every zoom level.
 5. Add conditions with nested AND/OR groups. Configure consecutive samples and,
    if required, a separate recovery condition for hysteresis.

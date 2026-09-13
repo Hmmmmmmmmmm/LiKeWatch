@@ -7,7 +7,7 @@ use the same durable queue. OCR runs locally; outbound delivery is opt-in.
 
 ## Download and run
 
-Get the [**v0.2 release**](https://github.com/Hmmmmmmmmmm/LiKeWatch/releases/tag/v0.2): Windows x64 portable EXE or macOS
+Get the [**v0.2.1 release**](https://github.com/Hmmmmmmmmmm/LiKeWatch/releases/tag/v0.2.1): Windows x64 portable EXE or macOS
 15+ Apple Silicon DMG. Both include Python, Qt, Tesseract and English model data.
 See [installation and first run](docs/INSTALL.md). No signing credentials are
 included; this release has unsigned Windows and ad-hoc-signed macOS binaries.

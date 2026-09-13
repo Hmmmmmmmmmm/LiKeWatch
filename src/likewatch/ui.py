@@ -46,8 +46,8 @@ from PySide6.QtWidgets import (
     QGroupBox,
 )
 from platformdirs import user_data_dir
-from .domain import Region, Rule, Quality
-from .profiles import demo_profile, load, save, validate
+from .domain import Profile, Region, Rule, Quality
+from .profiles import load, save, validate
 from .rules import evaluate, explain, validate_tree
 from .imaging import validate_corners, rectify, preprocess
 from .capture import demo_frame, screen_permission
@@ -143,12 +143,15 @@ class ImageView(QGraphicsView):
     corners_chosen = Signal(object)
     corners_edited = Signal(str, object)
     selected = Signal(str)
+    zoom_changed = Signal(float)
 
     def __init__(self):
         super().__init__()
         self.setScene(QGraphicsScene(self))
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setDragMode(self.DragMode.ScrollHandDrag)
+        self.fit_mode = True
+        self.fitting = False
         self.frame = None
         self.regions = []
         self.selected_id = None
@@ -188,7 +191,7 @@ class ImageView(QGraphicsView):
                     self.scene().addItem(handle)
                     self.handles.append(handle)
         if fit:
-            self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+            self.reset_zoom()
 
     def handle_changed(self, region_id):
         if not self.editable or region_id != self.selected_id or len(self.handles) != 4:
@@ -241,15 +244,35 @@ class ImageView(QGraphicsView):
         self.loupe.hide()
         super().leaveEvent(event)
 
+    def reset_zoom(self):
+        self.fit_mode = True
+        if self.frame is None or self.fitting:
+            return
+        self.fitting = True
+        try:
+            self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        finally:
+            self.fitting = False
+        self.zoom_changed.emit(self.transform().m11() * 100)
+
+    def set_zoom(self, percent):
+        # Disable automatic fitting before scale() can expose scrollbars and resize.
+        self.fit_mode = False
+        target = max(0.01, min(20.0, percent / 100))
+        factor = target / self.transform().m11()
+        self.scale(factor, factor)
+        self.zoom_changed.emit(self.transform().m11() * 100)
+
     def wheelEvent(self, event):
-        factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-        if 0.02 < self.transform().m11() * factor < 20:
-            self.scale(factor, factor)
+        delta = event.angleDelta().y() or event.pixelDelta().y()
+        if delta:
+            self.set_zoom(self.transform().m11() * 100 * (1.15 if delta > 0 else 1 / 1.15))
+        event.accept()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.frame is not None:
-            self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        if self.fit_mode and not self.fitting:
+            self.reset_zoom()
 
 
 class RegionDialog(QDialog):
@@ -724,7 +747,7 @@ class MainWindow(QMainWindow):
         self.instance_lock.setStaleLockTime(0)
         if not self.instance_lock.tryLock(0):
             raise RuntimeError("LiKeWatch is already running with this data directory.")
-        self.profile = demo_profile()
+        self.profile = Profile()
         if (self.data_dir / "last-profile.json").exists():
             try:
                 self.profile = load(self.data_dir / "last-profile.json")
@@ -762,10 +785,10 @@ class MainWindow(QMainWindow):
         self.alarm_timer = QTimer(self)
         self.alarm_timer.timeout.connect(self.alarm_tick)
         self.alarm_timer.start(500)
+        self.update_controls()
         self.refresh_regions()
         self.refresh_rules()
-        self.update_controls()
-        self.log("INFO", "Ready. Take a Snapshot, then Trigger OCR on the still image.")
+        self.log("INFO", "Ready. Take a Snapshot, add regions, then Trigger OCR on the still image.")
         self.worker.submit(
             (self.revision, copy.deepcopy(self.profile), "history", None)
         )
@@ -818,16 +841,23 @@ class MainWindow(QMainWindow):
         self.frame_label = QLabel("No analyzed frame yet")
         ll.addWidget(self.frame_label)
         self.edit_geometry = QCheckBox("Edit corners on frozen frame")
+        self.edit_geometry.setChecked(True)
         self.edit_geometry.toggled.connect(self.geometry_mode)
         ll.addWidget(self.edit_geometry)
-        ll.addWidget(
-            button(
-                "Reset zoom",
-                lambda: self.image.fitInView(
-                    self.image.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio
-                ),
-            )
-        )
+        zoom_controls = QHBoxLayout()
+        zoom_controls.addWidget(button("Reset zoom", self.image.reset_zoom))
+        zoom_controls.addWidget(QLabel("Zoom"))
+        self.zoom_control = QDoubleSpinBox()
+        self.zoom_control.setRange(1, 2000)
+        self.zoom_control.setDecimals(1)
+        self.zoom_control.setSingleStep(10)
+        self.zoom_control.setSuffix(" %")
+        self.zoom_control.setKeyboardTracking(False)
+        self.zoom_control.setToolTip("Image scale: 100% is actual size. Scroll to zoom; drag to pan.")
+        self.zoom_control.valueChanged.connect(self.image.set_zoom)
+        self.image.zoom_changed.connect(self.sync_zoom)
+        zoom_controls.addWidget(self.zoom_control)
+        ll.addLayout(zoom_controls)
         self.image.corners_chosen.connect(
             self.region_chosen, Qt.ConnectionType.QueuedConnection
         )
@@ -931,6 +961,11 @@ class MainWindow(QMainWindow):
             "QToolTip {color:#0f172a;background:#ffffff;border:1px solid #64748b;padding:5px;} QGroupBox {font-weight:600; border:1px solid #cbd5e1; border-radius:7px; margin-top:12px; padding-top:12px;} QGroupBox::title {subcontrol-origin:margin; left:10px;} QPushButton {padding:6px 9px;} QTableWidget {gridline-color:#e2e8f0;}"
         )
 
+    def sync_zoom(self, percent):
+        blocked = self.zoom_control.blockSignals(True)
+        self.zoom_control.setValue(percent)
+        self.zoom_control.blockSignals(blocked)
+
     def log(self, level, message):
         logger.log(40 if level == "ERROR" else 30 if level == "WARNING" else 20, message)
         if self.log_filter.currentText() not in ("All", level):
@@ -956,6 +991,8 @@ class MainWindow(QMainWindow):
         self.image.points = []
         self.image.loupe.hide()
         self.update_controls()
+        if self.frame is not None:
+            self.image.show_frame(self.frame, self.profile.regions, self.selected_id)
 
     def present_editor(self, dialog, accepted=None):
         self.freeze_current()
@@ -1009,7 +1046,9 @@ class MainWindow(QMainWindow):
             still and bool(self.profile.regions) and not self.image.picking
         )
         self.start_button.setEnabled(main and (not self.busy or self.timer.isActive()))
-        self.image.editable = still and self.edit_geometry.isChecked()
+        self.image.editable = still and self.edit_geometry.isChecked() and not self.image.picking
+        for handle in self.image.handles:
+            handle.setEnabled(self.image.editable)
 
     def can_edit(self):
         return (
@@ -1049,7 +1088,6 @@ class MainWindow(QMainWindow):
         if self.pages.currentWidget() is not self.splitter:
             return
         self.freeze_current()
-        self.edit_geometry.setChecked(False)
         if self.profile.source == "screen" and not screen_permission(request=True):
             self.report_error(
                 "Screen recording permission is required. Enable LiKeWatch in Privacy & Security, then restart the app."
@@ -1077,6 +1115,7 @@ class MainWindow(QMainWindow):
         self.observations = {}
         self.previews = {}
         self.review_mode = False
+        self.update_controls()
         self.image.show_frame(frame, self.profile.regions, self.selected_id, fit=True)
         self.frame_label.setText(
             "Still snapshot " + time.strftime("%H:%M:%S", time.localtime(timestamp))
@@ -1089,7 +1128,6 @@ class MainWindow(QMainWindow):
     def trigger_ocr(self):
         if not self.can_edit() or self.image.picking:
             return
-        self.edit_geometry.setChecked(False)
         self.review_mode = True
         self.busy = self.worker.submit(
             (
@@ -1126,7 +1164,6 @@ class MainWindow(QMainWindow):
                 return
             self.image.picking = False
             self.image.loupe.hide()
-            self.edit_geometry.setChecked(False)
             self.is_still = False
             self.review_mode = False
             self.image.editable = False
@@ -1157,6 +1194,7 @@ class MainWindow(QMainWindow):
         self.frame = frame
         self.observations = observations
         self.previews = previews
+        self.update_controls()
         self.image.show_frame(frame, self.profile.regions, self.selected_id, fit=first)
         self.frame_label.setText(
             "Analyzed " + time.strftime("%H:%M:%S", time.localtime(timestamp))
@@ -1286,7 +1324,6 @@ class MainWindow(QMainWindow):
     def add_region(self):
         if not self.can_edit():
             return
-        self.edit_geometry.setChecked(False)
         self.invalidate()
         self.image.picking = True
         self.image.points = []

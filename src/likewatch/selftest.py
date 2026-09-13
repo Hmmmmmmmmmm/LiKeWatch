@@ -29,8 +29,20 @@ def run():
         assert all(o.quality == Quality.VALID for o in observations.values())
         with tempfile.TemporaryDirectory() as directory:
             window = MainWindow(directory)
+            assert not window.profile.regions and not window.profile.rules
+            assert window.edit_geometry.isChecked()
+            window.profile = profile
+            window.invalidate()
+            window.refresh_regions()
             window.show()
             app.processEvents()
+            window.zoom_control.setValue(250)
+            app.processEvents()
+            assert abs(window.image.transform().m11() - 2.5) < 0.001
+            window.resize(1200, 800)
+            app.processEvents()
+            assert abs(window.image.transform().m11() - 2.5) < 0.001
+            window.image.reset_zoom()
             window.snapshot()
             deadline = time.time() + 40
             while window.busy and time.time() < deadline:
