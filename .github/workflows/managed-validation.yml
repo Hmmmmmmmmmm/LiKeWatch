@@ -29,11 +29,11 @@ jobs:
       run:
         shell: bash -el {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.13'
       - name: Test source
@@ -43,7 +43,7 @@ jobs:
         run: |
           python -m pip install '.[dev,manager]'
           python -m pytest -q
-      - uses: conda-incubator/setup-miniconda@v3
+      - uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3
         with:
           miniforge-version: latest
           activate-environment: ''
@@ -64,7 +64,7 @@ jobs:
           python scripts/test_installer.py --installer "$installer" --prefix "$RUNNER_TEMP/${{ matrix.prefix }}" --report "$RUNNER_TEMP/managed-build/installed-smoke.json"
       - name: Signed source updates and rollback
         run: '"$RUNNER_TEMP/${{ matrix.prefix }}/${{ matrix.python }}" scripts/qualify_installation.py --root "$RUNNER_TEMP/${{ matrix.prefix }}" --source "$GITHUB_WORKSPACE" --private-key "$RUNNER_TEMP/fixture.key" --report "$RUNNER_TEMP/managed-build/update-qualification.json"'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: managed-${{ matrix.platform }}
@@ -76,7 +76,7 @@ jobs:
             ${{ runner.temp }}/managed-build/LiKeWatch-environment-*.tar.gz
           if-no-files-found: warn
           retention-days: 14
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: managed-report-${{ matrix.platform }}

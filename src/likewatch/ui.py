@@ -657,6 +657,9 @@ class SettingsDialog(QDialog):
             self.autosave()
 
     def autosave(self):
+        # An explicit save also consumes the pending debounced save. Otherwise
+        # that callback changes the revision while a test incident is running.
+        self.save_timer.stop()
         try:
             p=copy.deepcopy(self.profile)
             p.device=self.device.value()

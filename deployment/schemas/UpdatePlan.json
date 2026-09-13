@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UpdatePlan",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "enum": [
+        1
+      ],
+      "type": "integer"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "candidate": {
+      "type": "object",
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "version": {
+          "type": "string"
+        },
+        "environment_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "manifest_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "profile_read": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Inclusive ordered schema range"
+        },
+        "database_read": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Inclusive ordered schema range"
+        }
+      },
+      "required": [
+        "commit",
+        "database_read",
+        "environment_id",
+        "manifest_digest",
+        "profile_read",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "phase": {
+      "enum": [
+        "prepared",
+        "validated"
+      ],
+      "type": "string"
+    },
+    "created": {
+      "type": "number"
+    },
+    "validation": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "candidate",
+    "created",
+    "generation",
+    "id",
+    "phase",
+    "schema",
+    "sequence"
+  ],
+  "additionalProperties": false
+}

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 
 
 def main():
@@ -65,9 +66,11 @@ def main():
     return result"""
     entry.write_text(entry.read_text().replace('    return app.exec()', hook))
     original = manager.state()
-    version = '0.3.991'
     app = remote / 'deployment/app.toml'
-    app.write_text(app.read_text().replace('version = "0.3.0"', f'version = "{version}"'))
+    base = tomllib.loads(app.read_text())['version']
+    major, minor, patch = map(int, base.split('.'))
+    version, second_version, bad_version = [f'{major}.{minor}.{patch + offset}' for offset in (991, 992, 993)]
+    app.write_text(app.read_text().replace(f'version = "{base}"', f'version = "{version}"'))
     command(git, 'add', '.', cwd=remote)
     command(git, 'commit', '-m', 'Local qualification candidate', cwd=remote)
     commit = command(git, 'rev-parse', 'HEAD', cwd=remote)
@@ -81,7 +84,7 @@ def main():
     (folder / 'release-manifest.json').write_bytes(raw)
     (folder / 'release-manifest.sig').write_bytes(key.sign(raw))
     config = manager.config.copy()
-    config.update(remote=str(remote), fixture_release=str(folder), isolated_app=True, data_root=str(work / 'user-data'))
+    config.update(remote=str(remote), fixture_release=str(folder), isolated_app=True, data_root=str(work / 'user data 测试'))
     atomic_json(root / 'manager/config.json', config)
     manager = Manager(root)
     plan = manager.prepare()
@@ -115,11 +118,11 @@ def main():
         retained = {table: db.execute('SELECT * FROM ' + table).fetchall() for table in ('incidents','events','outbox','telegram_cursor')}
     profile_path = Path(config['data_root']) / 'last-profile.json'
     retained_profile = json.loads(profile_path.read_text())
-    app.write_text(app.read_text().replace(version, '0.3.992'))
+    app.write_text(app.read_text().replace(version, second_version))
     command(git, 'add', '.', cwd=remote); command(git, 'commit', '-m', 'Second healthy fixture', cwd=remote)
     second = command(git, 'rev-parse', 'HEAD', cwd=remote)
-    command(git, 'tag', 'v0.3.992', cwd=remote)
-    manifest.update(commit=second, version='0.3.992', tag='v0.3.992', sequence=manifest['sequence'] + 1)
+    command(git, 'tag', 'v' + second_version, cwd=remote)
+    manifest.update(commit=second, version=second_version, tag='v' + second_version, sequence=manifest['sequence'] + 1)
     # Repackage identical dependencies with another native resource to exercise
     # a new environment identity and installation at its final prefix.
     import shutil, tarfile
@@ -158,11 +161,11 @@ def main():
     # A failed candidate validation must not modify active/previous or consume sequence.
     bad = remote / 'src/likewatch/selftest.py'
     bad.write_text('raise RuntimeError("Injected candidate failure")\n')
-    app.write_text(app.read_text().replace('0.3.992', '0.3.993'))
+    app.write_text(app.read_text().replace(second_version, bad_version))
     command(git, 'add', '.', cwd=remote); command(git, 'commit', '-m', 'Local failed candidate', cwd=remote)
     bad_commit = command(git, 'rev-parse', 'HEAD', cwd=remote)
-    command(git, 'tag', 'v0.3.993', cwd=remote)
-    manifest.update(commit=bad_commit, version='0.3.993', tag='v0.3.993', sequence=manifest['sequence'] + 1)
+    command(git, 'tag', 'v' + bad_version, cwd=remote)
+    manifest.update(commit=bad_commit, version=bad_version, tag='v' + bad_version, sequence=manifest['sequence'] + 1)
     raw = canonical(manifest)
     (folder / 'release-manifest.json').write_bytes(raw); (folder / 'release-manifest.sig').write_bytes(key.sign(raw))
     bad_plan = manager.prepare()
@@ -213,8 +216,15 @@ def main():
     manager.repair()
     assert manager.doctor()['status'] == 'ready'
     assert any((root / 'preserved').glob('environment-*'))
+    from likewatch_manager.retention import cleanup
+    retained_state = manager.state()
+    result = cleanup(manager, apply=True)
+    assert bad_commit in result['sources']
+    assert manager.state() == retained_state
+    assert manager.check_source(retained_state['active']).exists()
+    assert manager.check_source(retained_state['previous']).exists()
     report = {'status': 'passed', 'root': str(root), 'seed_commit': original['active']['commit'],
-              'candidate_commit': commit, 'environment_reused': True, 'environment_change_and_rollback': True, 'gui_update_restart': True, 'offline_environment_repair': True, 'supervisor_death_closes_app': True,
+              'candidate_commit': commit, 'environment_reused': True, 'environment_change_and_rollback': True, 'gui_update_restart': True, 'offline_environment_repair': True, 'supervisor_death_closes_app': True, 'retention_cleanup': True,
               'checks': ['signed prepare', 'real spawned OCR validation', 'atomic activation',
                          'healthy Qt close without restart', 'previous source unchanged',
                          'stale plan rejected', 'failed validation leaves deployment unchanged',

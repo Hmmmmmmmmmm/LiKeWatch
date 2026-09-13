@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HealthReport",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "enum": [
+        1
+      ],
+      "type": "integer"
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "session": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "transaction": {
+      "type": "string"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "environment_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "source": {
+      "type": "string"
+    },
+    "python": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "ready"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "commit",
+    "environment_id",
+    "nonce",
+    "pid",
+    "python",
+    "schema",
+    "session",
+    "source",
+    "status",
+    "transaction"
+  ],
+  "additionalProperties": false
+}

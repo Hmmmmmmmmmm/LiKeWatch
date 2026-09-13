@@ -5,6 +5,12 @@ from pathlib import Path
 import sys
 from .common import ManagerError, locked
 from .deployment import Manager
+from .models import ManagerResult, validate
+
+
+def emit(value):
+    value = {"schema": 1, **value}
+    print(json.dumps(validate(value, ManagerResult)))
 
 
 def main(argv=None):
@@ -41,16 +47,15 @@ def main(argv=None):
         elif command == 'repair':
             result = manager.repair()
         else:
-            # Explicit preview only. Automatic deletion is intentionally conservative in protocol 1.
-            with locked(manager.root / 'state/run.lock'), locked(manager.root / 'state/update.lock'):
-                state = manager.state()
-                protected = {d['commit'] for d in (state['active'], state.get('previous')) if d}
-                result = {'status': 'retention-preview', 'retained': sorted(protected), 'detail': 'Source/environment deletion is not automatic; retained candidates support recovery.'}
-        print(json.dumps({'ok': True, 'result': result}))
+            if target not in (None, '--apply'):
+                raise ManagerError('Use cleanup for a preview or cleanup --apply to remove eligible artifacts')
+            from .retention import cleanup
+            result = cleanup(manager, apply=target == '--apply')
+        emit({'ok': True, 'result': result})
         return 0
     except (ManagerError, OSError, ValueError, KeyError, TypeError) as error:
         message = str(error) if isinstance(error, ManagerError) else 'Invalid or inaccessible installation metadata; run doctor or reinstall at a new prefix'
-        print(json.dumps({'ok': False, 'error': message}))
+        emit({'ok': False, 'error': message})
         return 2
 
 

@@ -1,12 +1,14 @@
 """Release authority: verify exact metadata bytes before interpreting candidate data."""
 import base64
 import json
+import re
 import time
 from packaging.version import Version, InvalidVersion
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
 from .common import ManagerError, identifier
 from . import PROTOCOL
+from .models import ReleaseManifest, validate
 
 REPOSITORY = 'Hmmmmmmmmmm/LiKeWatch'
 
@@ -26,7 +28,7 @@ def verify(raw, signature, public_keys, *, fresh=True, repository=REPOSITORY):
     if not valid:
         raise ManagerError('Release signature is missing or untrusted')
     try:
-        m = json.loads(raw)
+        m = validate(json.loads(raw), ReleaseManifest)
         if m['schema'] != 1 or m['repository'] != repository or m['channel'] != 'stable':
             raise ValueError()
         version = Version(m['version'])
@@ -55,6 +57,8 @@ def verify(raw, signature, public_keys, *, fresh=True, repository=REPOSITORY):
             if payload['python'] != '3.13' or type(payload['payload_size']) is not int or not 0 < payload['payload_size'] < 3_000_000_000:
                 raise ValueError()
             identifier(payload['payload_name'], r'[A-Za-z0-9_.-]+')
+            if 'payload_url' in payload and not re.fullmatch(re.escape(f'https://github.com/{repository}/releases/download/') + r'v[0-9]+\.[0-9]+(?:\.[0-9]+)?/' + re.escape(payload['payload_name']), payload['payload_url']):
+                raise ValueError()
         if not m['platforms']:
             raise ValueError()
     except ManagerError:

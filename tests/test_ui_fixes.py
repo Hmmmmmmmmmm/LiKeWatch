@@ -377,6 +377,7 @@ def test_test_send_logs_and_history_update_inside_settings(window,app,monkeypatc
     window.open_settings();editor=window.pages.currentWidget()
     editor.attach.setChecked(True)
     editor.test_destination()
+    assert not editor.save_timer.isActive()
     wait(app,lambda:bool(window.store.history(window.profile.id)))
     wait(app,lambda:'TEST ' in window.logs.toPlainText())
     assert 'Test incident requested with snapshot' in window.logs.toPlainText()

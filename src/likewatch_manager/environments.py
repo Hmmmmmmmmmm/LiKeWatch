@@ -159,6 +159,27 @@ class Environments:
         # Qualification is recorded only by the caller after real source/OCR tests.
         atomic_json(Path(prefix) / 'likewatch-pending-environment.json', lock)
 
+    @staticmethod
+    def snapshot(prefix):
+        records = {}
+        excluded = {'likewatch-inventory.json'}
+        for path in sorted(Path(prefix).rglob('*')):
+            relative = path.relative_to(prefix).as_posix()
+            if relative in excluded:
+                continue
+            if path.is_symlink():
+                records[relative] = {'link': os.readlink(path)}
+            elif path.is_file():
+                records[relative] = {'sha256': file_hash(path)}
+        return records
+
+    def unchanged(self, identity):
+        prefix = self.check(identity)
+        seal = read_json(prefix / 'likewatch-inventory.json', 10_000_000)
+        if seal.get('schema') != 1 or seal.get('files') != self.snapshot(prefix):
+            raise ManagerError('Modified environment preserved by retention cleanup')
+        return prefix
+
     def qualify(self, identity):
         prefix = self.prefix(identity)
         pending = prefix / 'likewatch-pending-environment.json'
@@ -167,3 +188,5 @@ class Environments:
             if validate_lock(lock) != identity:
                 raise ManagerError('Environment identity changed during validation')
             atomic_json(prefix / 'likewatch-environment.json', lock)
+            if not (prefix / 'likewatch-inventory.json').exists():
+                atomic_json(prefix / 'likewatch-inventory.json', {'schema': 1, 'files': self.snapshot(prefix)})

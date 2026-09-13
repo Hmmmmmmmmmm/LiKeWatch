@@ -8,6 +8,7 @@ import sys
 
 @dataclass
 class RuntimeContext:
+    schema: int = 1
     source_root: Path = field(default_factory=lambda: Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[2])))
     native_root: Path | None = None
     data_root: Path | None = None

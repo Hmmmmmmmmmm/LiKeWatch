@@ -14,6 +14,7 @@ from .environments import Environments, interpreter, scoped_environment
 from .gitstore import GitStore
 from .releases import Releases
 from .trust import verify
+from .models import DeploymentState, LaunchContext, UpdatePlan, validate
 
 
 class Manager:
@@ -37,7 +38,7 @@ class Manager:
             self.releases = FixtureReleases(self.config['fixture_release'], self.keys)
 
     def state(self):
-        state = read_json(self.root / 'state/deployment.json')
+        state = validate(read_json(self.root / 'state/deployment.json'), DeploymentState)
         if state.get('schema') != 1 or type(state.get('generation')) is not int:
             raise ManagerError('Deployment state is invalid; run doctor')
         for entry in (state.get('active'), state.get('previous')):
@@ -61,6 +62,7 @@ class Manager:
                 'profile_read': manifest['profile_read'], 'database_read': manifest['database_read']}
 
     def check_source(self, deployment):
+        self.accepted_manifest(deployment)
         path = owned(self.root, 'releases/' + deployment['commit'])
         self.git.check(path, deployment['commit'])
         return path
@@ -85,7 +87,7 @@ class Manager:
         session = uuid.uuid4().hex
         directory = owned(self.root, 'state/sessions/' + session)
         directory.mkdir(parents=True)
-        value = {'source_root': str(source), 'native_root': str(prefix / 'native'),
+        value = {'schema': 1, 'source_root': str(source), 'native_root': str(prefix / 'native'),
                  'commit': deployment['commit'], 'environment_id': deployment['environment_id'],
                  'install_root': str(self.root), 'manager_python': str(interpreter(self.root)),
                  'session': session, 'nonce': uuid.uuid4().hex, 'transaction': transaction,
@@ -96,6 +98,7 @@ class Manager:
         if test:
             sandbox = Path(data_root).resolve() if data_root else directory / 'test-data'
             value.update(data_root=str(sandbox), settings_file=str(sandbox / 'settings.ini'), log_root=str(directory / 'logs'))
+        validate(value, LaunchContext)
         atomic_json(directory / 'context.json', value)
         return value, directory / 'context.json'
 
@@ -168,7 +171,7 @@ class Manager:
     def plan(self, transaction):
         identifier(transaction, r'[a-f0-9]{32}')
         folder = owned(self.root, 'state/transactions/' + transaction)
-        plan = read_json(folder / 'plan.json')
+        plan = validate(read_json(folder / 'plan.json'), UpdatePlan)
         manifest, signed_digest = self.manifest(folder)
         if plan['schema'] != 1 or plan['id'] != transaction or plan['generation'] != self.state()['generation'] or plan['candidate'] != self.deployment(manifest, signed_digest) or plan['sequence'] != manifest['sequence'] or manifest['sequence'] <= self.state()['highest_sequence']:
             raise ManagerError('Stale or altered update plan; prepare again')
@@ -225,7 +228,7 @@ class Manager:
                     folder = self.root / 'cache/repair' / active['environment_id']
                     folder.mkdir(parents=True, exist_ok=True)
                     from .trust import REPOSITORY
-                    atomic_json(folder / 'assets.json', {metadata['payload_name']: f"https://github.com/{REPOSITORY}/releases/download/{manifest['tag']}/{metadata['payload_name']}"})
+                    atomic_json(folder / 'assets.json', {metadata['payload_name']: metadata.get('payload_url') or f"https://github.com/{REPOSITORY}/releases/download/{manifest['tag']}/{metadata['payload_name']}"})
                     archive = folder / metadata['payload_name']
                     if not archive.is_file() or file_hash(archive) != metadata['payload_sha256']:
                         if self.fixture:

@@ -2,6 +2,11 @@ name: Publish managed release
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: Full installer or source-only update
+        type: choice
+        options: [full, source]
+        default: full
       qualification_run:
         description: Successful managed qualification run ID for this exact commit
         required: true
@@ -20,10 +25,11 @@ jobs:
   sign:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Require completed native qualification for the exact source
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_MODE: ${{ inputs.mode }}
           RUN_ID: ${{ inputs.qualification_run }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > /tmp/qualification.json
@@ -32,20 +38,33 @@ jobs:
           run = json.load(open('/tmp/qualification.json'))
           assert run['head_sha'] == os.environ['GITHUB_SHA']
           assert run['conclusion'] == 'success'
-          assert run['path'] == '.github/workflows/managed-validation.yml'
+          assert run['path'] == ('.github/workflows/source-validation.yml' if os.environ['RELEASE_MODE'] == 'source' else '.github/workflows/managed-validation.yml')
           assert run['head_repository']['full_name'] == os.environ['GITHUB_REPOSITORY']
           PY
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           run-id: ${{ inputs.qualification_run }}
           github-token: ${{ github.token }}
           path: qualified
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.13'
       - run: python -m pip install cryptography==46.0.5 packaging==26.3
+      - name: Retrieve previous signed release for monotonicity checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" > /tmp/latest-release.json
+          python - <<'PYLATEST'
+          import json, os, subprocess
+          release = json.load(open('/tmp/latest-release.json'))
+          names = {a['name'] for a in release['assets']}
+          if 'release-manifest.json' in names:
+              subprocess.run(['gh', 'release', 'download', release['tag_name'], '--repo', os.environ['GITHUB_REPOSITORY'], '--pattern', 'release-manifest.*', '--dir', 'previous'], check=True)
+          PYLATEST
       - name: Sign exact manifest with the pinned production authority
         env:
+          RELEASE_MODE: ${{ inputs.mode }}
           SIGNING_KEY: ${{ secrets.LIKEWATCH_RELEASE_KEY }}
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_SEQUENCE: ${{ inputs.sequence }}
@@ -59,10 +78,16 @@ jobs:
               smoke = json.loads((artifact / 'installed-smoke.json').read_text())
               updates = json.loads((artifact / 'update-qualification.json').read_text())
               assert smoke['status'] == updates['status'] == 'passed'
-              assert smoke['commit'] == updates['seed_commit'] == os.environ['GITHUB_SHA']
+              assert smoke['commit'] == updates['seed_commit']
+              if os.environ['RELEASE_MODE'] == 'source':
+                  source = json.loads((artifact / 'source-smoke.json').read_text())
+                  assert source['status'] == 'passed' and source['commit'] == os.environ['GITHUB_SHA']
+              else:
+                  assert smoke['commit'] == os.environ['GITHUB_SHA']
               assert updates['environment_change_and_rollback'] is True
               assert updates['offline_environment_repair'] is True
               assert updates['supervisor_death_closes_app'] is True
+              assert updates['retention_cleanup'] is True
           raw = base64.b64decode(os.environ['SIGNING_KEY'], validate=True)
           key = Ed25519PrivateKey.from_private_bytes(raw)
           public = base64.b64encode(key.public_key().public_bytes_raw()).decode()
@@ -71,15 +96,19 @@ jobs:
           try:
               with path.open('xb') as output:
                   path.chmod(0o600); output.write(raw)
-              subprocess.run(['python', 'scripts/release_manifest.py', '--output', 'signed', '--private-key', str(path), '--sequence', os.environ['RELEASE_SEQUENCE'], '--tag', os.environ['RELEASE_TAG'], '--payload', 'osx-arm64=qualified/managed-osx-arm64/payload-metadata.json', '--payload', 'win-64=qualified/managed-win-64/payload-metadata.json'], check=True)
+              previous = ['--previous', 'previous'] if Path('previous/release-manifest.json').exists() else []
+              if not previous:
+                  assert int(os.environ['RELEASE_SEQUENCE']) == 1
+              subprocess.run(['python', 'scripts/release_manifest.py', '--output', 'signed', '--private-key', str(path), '--sequence', os.environ['RELEASE_SEQUENCE'], '--tag', os.environ['RELEASE_TAG'], '--payload', 'osx-arm64=qualified/managed-osx-arm64/payload-metadata.json', '--payload', 'win-64=qualified/managed-win-64/payload-metadata.json'] + previous, check=True)
           finally:
               path.unlink(missing_ok=True)
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signed-release
           path: signed/*
   installers:
+    if: inputs.mode != 'source'
     needs: sign
     strategy:
       fail-fast: false
@@ -96,20 +125,20 @@ jobs:
       run:
         shell: bash -el {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: conda-incubator/setup-miniconda@v3
+      - uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3
         with:
           miniforge-version: latest
           activate-environment: ''
           auto-activate-base: true
       - run: conda install --yes --override-channels -c conda-forge python=3.13 constructor=3.16.1 cryptography packaging
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: signed-release
           path: ${{ runner.temp }}/signed
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: managed-${{ matrix.platform }}
           run-id: ${{ inputs.qualification_run }}
@@ -121,7 +150,7 @@ jobs:
         run: |
           installer=$(find "$RUNNER_TEMP/production-build/installers" -type f \( -name '*.sh' -o -name '*.exe' \) | head -1)
           python scripts/test_installer.py --installer "$installer" --prefix "$RUNNER_TEMP/LiKeWatchFinal" --report "$RUNNER_TEMP/production-build/installed-smoke.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: production-${{ matrix.platform }}
           path: |
@@ -130,17 +159,19 @@ jobs:
             ${{ runner.temp }}/production-build/installed-smoke.json
           if-no-files-found: error
   publish:
-    needs: installers
+    if: always() && needs.sign.result == 'success' && (needs.installers.result == 'success' || (inputs.mode == 'source' && needs.installers.result == 'skipped'))
+    needs: [sign, installers]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: inputs.mode != 'source'
         with:
           pattern: production-*
           path: artifacts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: signed-release
           path: signed
@@ -148,9 +179,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_MODE: ${{ inputs.mode }}
         run: |
-          mkdir publication
+          mkdir -p publication artifacts
           find artifacts -type f \( -name '*.exe' -o -name '*.sh' -o -name '*.tar.gz' \) -exec cp {} publication/ \;
           cp signed/release-manifest.* publication/
           (cd publication && sha256sum * > SHA256SUMS)
-          gh release create "$RELEASE_TAG" publication/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "LiKeWatch $RELEASE_TAG" --notes-file docs/RELEASE-v0.3.md
+          cp docs/RELEASE-v0.3.md /tmp/release-notes.md
+          if [ "$RELEASE_MODE" = source ]; then
+            python - <<'PYNOTES'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path('signed/release-manifest.json').read_text())
+          urls = sorted({p['payload_url'].rsplit('/', 1)[0].replace('/download/', '/tag/') for p in manifest['platforms'].values()})
+          Path('/tmp/release-notes.md').write_text('Source-only update. Existing installations update through Updates. New installations should use the full installer from:\n\n' + '\n'.join(urls))
+          PYNOTES
+          fi
+          gh release create "$RELEASE_TAG" publication/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "LiKeWatch $RELEASE_TAG" --notes-file /tmp/release-notes.md

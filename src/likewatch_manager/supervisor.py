@@ -6,6 +6,7 @@ import subprocess
 import time
 from .common import ManagerError, atomic_json, locked, read_json
 from .environments import interpreter, scoped_environment
+from .models import HealthReport, TransactionJournal, validate
 
 
 def user_data(manager):
@@ -49,6 +50,10 @@ def start(manager, deployment, transaction='', arguments=()):
             path = Path(value['health_file'])
             if path.exists():
                 report = read_json(path)
+                try:
+                    validate(report, HealthReport)
+                except ManagerError:
+                    raise ManagerError('Trial startup reported a different process/source/environment') from None
                 expected = {key: value[key] for key in ('nonce', 'session', 'transaction', 'commit', 'environment_id')}
                 expected.update(schema=1, pid=process.pid, status='ready', source=value['source_root'], python=str(interpreter(prefix)))
                 if report != expected:
@@ -71,7 +76,7 @@ def activate(manager, plan):
         raise ManagerError('Activation requires a current validated plan')
     transaction = plan['id']
     folder = manager.root / 'state/transactions' / transaction
-    atomic_json(folder / 'journal.json', {'schema': 1, 'phase': 'trial', 'generation': state['generation'], 'candidate': plan['candidate']})
+    atomic_json(folder / 'journal.json', validate({'schema': 1, 'phase': 'trial', 'generation': state['generation'], 'candidate': plan['candidate']}, TransactionJournal))
     process, value = start(manager, plan['candidate'], transaction=transaction)
     try:
         manager.check_source(plan['candidate'])
@@ -81,7 +86,7 @@ def activate(manager, plan):
         atomic_json(manager.root / 'state/deployment.previous.json', state)
         atomic_json(manager.root / 'state/deployment.json', new)
         atomic_json(Path(value['activated_file']), {'nonce': value['nonce']})
-        atomic_json(folder / 'journal.json', {'schema': 1, 'phase': 'committed', 'generation': new['generation']})
+        atomic_json(folder / 'journal.json', validate({'schema': 1, 'phase': 'committed', 'generation': new['generation']}, TransactionJournal))
         return process, value
     except BaseException:
         stop_owned(process)

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LaunchContext",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "enum": [
+        1
+      ],
+      "type": "integer"
+    },
+    "source_root": {
+      "type": "string"
+    },
+    "native_root": {
+      "type": "string"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "environment_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "install_root": {
+      "type": "string"
+    },
+    "manager_python": {
+      "type": "string"
+    },
+    "session": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "transaction": {
+      "type": "string"
+    },
+    "health_file": {
+      "type": "string"
+    },
+    "request_file": {
+      "type": "string"
+    },
+    "activated_file": {
+      "type": "string"
+    },
+    "test_mode": {
+      "type": "boolean"
+    },
+    "supervised": {
+      "type": "boolean"
+    },
+    "data_root": {
+      "type": "string"
+    },
+    "settings_file": {
+      "type": "string"
+    },
+    "log_root": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "activated_file",
+    "commit",
+    "environment_id",
+    "health_file",
+    "install_root",
+    "manager_python",
+    "native_root",
+    "nonce",
+    "request_file",
+    "schema",
+    "session",
+    "source_root",
+    "supervised",
+    "test_mode",
+    "transaction"
+  ],
+  "additionalProperties": false
+}

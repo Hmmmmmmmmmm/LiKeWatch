@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ManagerResult",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "enum": [
+        1
+      ],
+      "type": "integer"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": {}
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "ok",
+    "schema"
+  ],
+  "additionalProperties": false
+}

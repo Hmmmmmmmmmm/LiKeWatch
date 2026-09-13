@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReleaseManifest",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "enum": [
+        1
+      ],
+      "type": "integer"
+    },
+    "repository": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "tag": {
+      "type": "string"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "channel": {
+      "enum": [
+        "stable"
+      ],
+      "type": "string"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "issued": {
+      "type": "integer"
+    },
+    "expires": {
+      "type": "integer"
+    },
+    "manager_protocol": {
+      "type": "integer"
+    },
+    "profile_read": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "Inclusive ordered schema range"
+    },
+    "database_read": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "Inclusive ordered schema range"
+    },
+    "platforms": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "environment_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "lock_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "payload_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "payload_name": {
+            "type": "string"
+          },
+          "payload_size": {
+            "type": "integer"
+          },
+          "python": {
+            "enum": [
+              "3.13"
+            ],
+            "type": "string"
+          },
+          "payload_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment_id",
+          "lock_sha256",
+          "payload_name",
+          "payload_sha256",
+          "payload_size",
+          "python"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "channel",
+    "commit",
+    "database_read",
+    "expires",
+    "issued",
+    "manager_protocol",
+    "platforms",
+    "profile_read",
+    "repository",
+    "schema",
+    "sequence",
+    "tag",
+    "version"
+  ],
+  "additionalProperties": false
+}
