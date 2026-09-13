@@ -3,6 +3,9 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [main]
+concurrency:
+  group: managed-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -15,10 +18,12 @@ jobs:
             platform: osx-arm64
             python: bin/python
             constructor: bin/constructor
+            prefix: LiKeWatch验证
           - os: windows-latest
             platform: win-64
             python: python.exe
             constructor: Scripts/constructor.exe
+            prefix: LiKeWatchTest
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -56,9 +61,9 @@ jobs:
       - name: Install offline and exercise generated launcher
         run: |
           installer=$(find "$RUNNER_TEMP/managed-build/installers" -type f \( -name '*.sh' -o -name '*.exe' \) | head -1)
-          python scripts/test_installer.py --installer "$installer" --prefix "$RUNNER_TEMP/LiKeWatch验证" --report "$RUNNER_TEMP/managed-build/installed-smoke.json"
+          python scripts/test_installer.py --installer "$installer" --prefix "$RUNNER_TEMP/${{ matrix.prefix }}" --report "$RUNNER_TEMP/managed-build/installed-smoke.json"
       - name: Signed source updates and rollback
-        run: '"$RUNNER_TEMP/LiKeWatch验证/${{ matrix.python }}" scripts/qualify_installation.py --root "$RUNNER_TEMP/LiKeWatch验证" --source "$GITHUB_WORKSPACE" --private-key "$RUNNER_TEMP/fixture.key" --report "$RUNNER_TEMP/managed-build/update-qualification.json"'
+        run: '"$RUNNER_TEMP/${{ matrix.prefix }}/${{ matrix.python }}" scripts/qualify_installation.py --root "$RUNNER_TEMP/${{ matrix.prefix }}" --source "$GITHUB_WORKSPACE" --private-key "$RUNNER_TEMP/fixture.key" --report "$RUNNER_TEMP/managed-build/update-qualification.json"'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

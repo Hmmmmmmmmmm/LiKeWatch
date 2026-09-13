@@ -12,7 +12,7 @@ Windows x64: download and run the `.exe` installer, then start `RunLiKeWatch.cmd
 
 macOS 15+ Apple Silicon: run the downloaded `.sh` installer with `bash`, then start `RunLiKeWatch.command`. See [installation instructions](https://github.com/Hmmmmmmmmmm/LiKeWatch/blob/main/docs/INSTALL.md).
 
-Use a local path without spaces. Installed environments cannot be moved; reinstall at a new prefix instead. This replaces the single portable executable distribution. Metadata signing is separate from Windows Authenticode and Apple notarization; the installer may still prompt under OS download policies.
+Use a local path without spaces; use ASCII characters on Windows. Installed environments cannot be moved; reinstall at a new prefix instead. This replaces the single portable executable distribution. Metadata signing is separate from Windows Authenticode and Apple notarization; the installer may still prompt under OS download policies.
 
 ## Validation and limits
 

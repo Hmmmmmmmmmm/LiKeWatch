@@ -2,7 +2,7 @@
 
 ## Windows x64
 
-Run the constructor installer and choose a per-user local folder without spaces in its full path. It includes private Python, Git, Qt, and OCR dependencies. Start the installed `RunLiKeWatch.cmd`. Do not move the installation after setup; reinstall at a new prefix if needed. The old v0.2 portable EXE remains a separate legacy distribution.
+Run the constructor installer and choose a per-user local folder with an ASCII path and no spaces. The Windows installer rejects characters outside the system code page; an ASCII path avoids this limitation. It includes private Python, Git, Qt, and OCR dependencies. Start the installed `RunLiKeWatch.cmd`. Do not move the installation after setup; reinstall at a new prefix if needed. The old v0.2 portable EXE remains a separate legacy distribution.
 
 ## macOS 15+ Apple Silicon
 

@@ -26,7 +26,13 @@ def main():
         env['PATH'] = '/usr/bin:/bin:/usr/sbin:/sbin'
         command = ['/bin/bash', str(Path(args.installer).resolve()), '-b', '-p', str(prefix)]
         python = prefix / 'bin/python'
-    subprocess.run(command, env=env, check=True, timeout=900)
+    try:
+        subprocess.run(command, env=env, check=True, timeout=900)
+    except subprocess.CalledProcessError:
+        for log in (prefix / 'install.log', prefix / '.step.log'):
+            if log.exists():
+                print(log.read_text(errors='replace')[-12000:], flush=True)
+        raise
     marker = json.loads((prefix / 'state/install-complete.json').read_text())
     if not marker:
         raise RuntimeError('Installer did not complete native validation')
