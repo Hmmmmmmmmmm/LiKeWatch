@@ -246,3 +246,18 @@ def test_repair_requires_accepted_signature_before_mutating_installation(tmp_pat
     assert marker.read_text() == 'preserve me'
     assert manager.state() == state
     assert not (tmp_path / 'preserved').exists()
+
+
+def test_supervisor_pipe_eof_closes_window(monkeypatch):
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QApplication, QWidget
+    from PySide6.QtTest import QTest
+    from likewatch.lifecycle import watch_manager
+    application = QApplication.instance() or QApplication([])
+    monkeypatch.setattr('sys.stdin', SimpleNamespace(fileno=lambda: 123))
+    monkeypatch.setattr('os.read', lambda descriptor, size: b'')
+    window = QWidget(); window.show()
+    watch_manager(window)
+    QTest.qWait(300)
+    assert not window.isVisible()
+    window.manager_watch.stop()

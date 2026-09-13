@@ -57,9 +57,12 @@ def main():
         poll.start(100)
         QTimer.singleShot(0, dialog.prepare_update)
         QTimer.singleShot(240000, window.close)
-    else:
+    elif '--qualification-hold' not in sys.argv:
         QTimer.singleShot(3000, window.close)
-    return app.exec()"""
+    result = app.exec()
+    import os
+    (Path(current.data_root) / 'qualification-exited').write_text(str(os.getpid()))
+    return result"""
     entry.write_text(entry.read_text().replace('    return app.exec()', hook))
     original = manager.state()
     version = '0.3.991'
@@ -172,6 +175,37 @@ def main():
     assert manager.state() == updated
     manager.validate(updated['previous'])
     manager.compatible(updated['previous'], config['data_root'])
+    # Kill only the supervisor while its GUI intentionally has no auto-close.
+    # The owned stdin pipe must make the app close cooperatively on both OSes.
+    from likewatch_manager.environments import interpreter
+    existing = set((root / 'state/sessions').iterdir())
+    parent = subprocess.Popen([str(interpreter(root)), '-I', '-B', str(root / 'manager/manager.py'),
+                               '--root', str(root), 'run', '--qualification-hold'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    health = None
+    deadline = time.monotonic() + 60
+    try:
+        while time.monotonic() < deadline:
+            for session in set((root / 'state/sessions').iterdir()) - existing:
+                if (session / 'health.json').is_file():
+                    health = json.loads((session / 'health.json').read_text())
+            if health:
+                break
+            if parent.poll() is not None:
+                raise AssertionError('Qualification supervisor exited before readiness')
+            time.sleep(0.1)
+        assert health, 'Qualification GUI did not become ready'
+        parent.terminate(); parent.wait(timeout=10)
+        exited = Path(config['data_root']) / 'qualification-exited'
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if exited.exists() and exited.read_text() == str(health['pid']):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError('Application remained orphaned after supervisor death')
+    finally:
+        if parent.poll() is None:
+            parent.terminate(); parent.wait(timeout=10)
     # Corrupt only a disposable environment completion record, then exercise
     # recovery using the authenticated offline seed and final-prefix creation.
     prefix = manager.environments.prefix(manager.state()['active']['environment_id'])
@@ -180,7 +214,7 @@ def main():
     assert manager.doctor()['status'] == 'ready'
     assert any((root / 'preserved').glob('environment-*'))
     report = {'status': 'passed', 'root': str(root), 'seed_commit': original['active']['commit'],
-              'candidate_commit': commit, 'environment_reused': True, 'environment_change_and_rollback': True, 'gui_update_restart': True, 'offline_environment_repair': True,
+              'candidate_commit': commit, 'environment_reused': True, 'environment_change_and_rollback': True, 'gui_update_restart': True, 'offline_environment_repair': True, 'supervisor_death_closes_app': True,
               'checks': ['signed prepare', 'real spawned OCR validation', 'atomic activation',
                          'healthy Qt close without restart', 'previous source unchanged',
                          'stale plan rejected', 'failed validation leaves deployment unchanged',

@@ -24,6 +24,7 @@ class RuntimeContext:
     health_file: str = ''
     request_file: str = ''
     activated_file: str = ''
+    supervised: bool = False
 
     @classmethod
     def from_dict(cls, data):

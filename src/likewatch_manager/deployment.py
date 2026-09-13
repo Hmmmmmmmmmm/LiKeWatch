@@ -79,7 +79,7 @@ class Manager:
             if not deployment['database_read'][0] <= schema <= deployment['database_read'][1]:
                 raise ManagerError('Database schema blocks rollback/update; use a compatible installer')
 
-    def context(self, deployment, *, transaction='', test=False, data_root=None):
+    def context(self, deployment, *, transaction='', test=False, data_root=None, supervised=False):
         source = self.check_source(deployment)
         prefix = self.environments.prefix(deployment['environment_id'])
         session = uuid.uuid4().hex
@@ -90,7 +90,7 @@ class Manager:
                  'install_root': str(self.root), 'manager_python': str(interpreter(self.root)),
                  'session': session, 'nonce': uuid.uuid4().hex, 'transaction': transaction,
                  'health_file': str(directory / 'health.json'), 'request_file': str(directory / 'request.json'),
-                 'activated_file': str(directory / 'activated.json'), 'test_mode': test}
+                 'activated_file': str(directory / 'activated.json'), 'test_mode': test, 'supervised': supervised}
         if data_root:
             value['data_root'] = str(Path(data_root).resolve())
         if test:

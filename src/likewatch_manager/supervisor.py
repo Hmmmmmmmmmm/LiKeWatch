@@ -33,13 +33,13 @@ def start(manager, deployment, transaction='', arguments=()):
     data_root = user_data(manager)
     manager.compatible(deployment, data_root)
     value, context_file = manager.context(deployment, transaction=transaction, data_root=data_root,
-                                          test=manager.config.get('isolated_app', False))
+                                          test=manager.config.get('isolated_app', False), supervised=True)
     prefix = manager.environments.prefix(deployment['environment_id'])
     env = scoped_environment(prefix, value)
     log = (context_file.parent / 'application.log').open('ab')
     try:
         process = subprocess.Popen([str(interpreter(prefix)), '-I', '-B', str(manager.root / 'manager/runner.py'), str(context_file), *arguments],
-                                   env=env, cwd=context_file.parent, stdout=log, stderr=log,
+                                   env=env, cwd=context_file.parent, stdin=subprocess.PIPE, stdout=log, stderr=log,
                                    start_new_session=os.name != 'nt', creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0)
     finally:
         log.close()
@@ -117,6 +117,8 @@ def run(manager, arguments=(), transaction=None, rollback=False):
         while True:
             # A healthy ordinary exit never rolls back or starts another GUI.
             code = process.wait()
+            if process.stdin:
+                process.stdin.close()
             if code != 75:
                 return code
             request = read_json(value['request_file'])

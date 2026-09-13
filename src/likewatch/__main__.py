@@ -39,6 +39,9 @@ def main():
     from .paths import context
     from PySide6.QtCore import QTimer
     current = context()
+    if current.supervised:
+        from .lifecycle import watch_manager
+        watch_manager(window)
     if current.health_file:
         def ready():
             import json, os
