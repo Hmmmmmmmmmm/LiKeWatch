@@ -105,6 +105,13 @@ def main():
     with sqlite3.connect(database) as db:
         db.execute('CREATE TABLE qualification_retained (value TEXT)')
         db.execute("INSERT INTO qualification_retained VALUES ('history/outbox fixture sentinel')")
+        db.execute("INSERT INTO incidents (id,profile,rule_id,name,activated,acknowledged) VALUES ('fixture-incident','fixture-profile','fixture-rule','Retained incident',?,1)", (time.time(),))
+        db.execute("INSERT INTO events VALUES ('fixture-event','fixture-profile','fixture-incident','TEST',?,'Retained event')", (time.time(),))
+        db.execute("INSERT INTO outbox (event_id,profile,incident,kind,chat,body,state,attempts,created) VALUES ('fixture-event','fixture-profile','fixture-incident','TEST','fixture-chat','Retained pending delivery','pending',2,?)", (time.time(),))
+        db.execute("INSERT INTO telegram_cursor VALUES ('fixture-profile',12345)")
+        retained = {table: db.execute('SELECT * FROM ' + table).fetchall() for table in ('incidents','events','outbox','telegram_cursor')}
+    profile_path = Path(config['data_root']) / 'last-profile.json'
+    retained_profile = json.loads(profile_path.read_text())
     app.write_text(app.read_text().replace(version, '0.3.992'))
     command(git, 'add', '.', cwd=remote); command(git, 'commit', '-m', 'Second healthy fixture', cwd=remote)
     second = command(git, 'rev-parse', 'HEAD', cwd=remote)
@@ -141,6 +148,9 @@ def main():
     assert manager.state()['active']['environment_id'] == original['active']['environment_id']
     with sqlite3.connect(database) as db:
         assert db.execute('SELECT value FROM qualification_retained').fetchone()[0] == 'history/outbox fixture sentinel'
+        for table, rows in retained.items():
+            assert db.execute('SELECT * FROM ' + table).fetchall() == rows, table
+    assert json.loads(profile_path.read_text()) == retained_profile
     updated = manager.state()
     # A failed candidate validation must not modify active/previous or consume sequence.
     bad = remote / 'src/likewatch/selftest.py'
@@ -167,7 +177,7 @@ def main():
               'checks': ['signed prepare', 'real spawned OCR validation', 'atomic activation',
                          'healthy Qt close without restart', 'previous source unchanged',
                          'stale plan rejected', 'failed validation leaves deployment unchanged',
-                         'GUI manager process and cooperative restart', 'actual rollback with healthy Qt shutdown', 'operational database sentinel preserved'],
+                         'GUI manager process and cooperative restart', 'actual rollback with healthy Qt shutdown', 'profile, history, pending outbox, acknowledgements and polling offsets preserved'],
               'work': str(work)}
     atomic_json(args.report, report)
     print(json.dumps(report))
