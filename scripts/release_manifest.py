@@ -42,6 +42,9 @@ def main():
         old = verify((previous / 'release-manifest.json').read_bytes(), (previous / 'release-manifest.sig').read_bytes(), authority, fresh=False)
         if args.sequence <= old['sequence'] or Version(app['version']) <= Version(old['version']):
             raise RuntimeError('Release version and sequence must increase')
+    existing = subprocess.run(['git', 'rev-parse', '-q', '--verify', 'refs/tags/' + args.tag + '^{}'], cwd=ROOT, text=True, capture_output=True)
+    if existing.returncode == 0 and existing.stdout.strip() != commit:
+        raise RuntimeError('Release tag already identifies a different commit')
     platforms = {}
     for item in args.payload:
         platform, file = item.split('=', 1)
