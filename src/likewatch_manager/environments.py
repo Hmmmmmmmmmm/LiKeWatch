@@ -111,6 +111,10 @@ class Environments:
         if file_hash(folder / 'lock.json') != metadata['lock_sha256'] or validate_lock(lock) != identity or lock['platform'] != platform:
             raise ManagerError('Environment identity or platform mismatch')
         self.verify_files(folder, lock)
+        return self.install_verified(prefix, folder, lock)
+
+    def install_verified(self, prefix, folder, lock):
+        self.verify_files(folder, lock)
         explicit = folder / 'explicit-local.txt'
         explicit.write_text('@EXPLICIT\n' + '\n'.join((folder / 'conda' / r['filename']).as_uri() + '#' + r['sha256'] for r in lock['conda']) + '\n')
         env = scoped_environment(self.root)

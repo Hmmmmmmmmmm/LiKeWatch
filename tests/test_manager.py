@@ -228,3 +228,21 @@ def test_launcher_forwards_report_option_without_consuming_its_path(monkeypatch)
     monkeypatch.setattr(supervisor, 'run', lambda manager, arguments, **kwargs: received.append(arguments) or 0)
     assert cli.main(['--root', '/fixture', 'run', '--self-test', '--ui-stress', '--report', '/tmp/report with spaces.json']) == 0
     assert received == [['--self-test', '--ui-stress', '--report', '/tmp/report with spaces.json']]
+
+
+def test_repair_requires_accepted_signature_before_mutating_installation(tmp_path, monkeypatch):
+    from likewatch_manager.deployment import Manager
+    monkeypatch.setattr('likewatch_manager.deployment.platform_id', lambda: 'osx-arm64')
+    atomic_json(tmp_path / 'manager/config.json', {'schema': 1, 'platform': 'osx-arm64', 'public_keys': [],
+        'fixture': True, 'remote': str(tmp_path / 'fixture-remote'), 'git': 'bin/git', 'conda': 'bin/conda'})
+    deployment = {'commit': 'a' * 40, 'environment_id': 'b' * 64, 'version': '0.3.0'}
+    state = {'schema': 1, 'generation': 1, 'active': deployment, 'previous': None, 'highest_sequence': 1}
+    atomic_json(tmp_path / 'state/deployment.json', state)
+    marker = tmp_path / 'envs' / ('app-' + 'b' * 64) / 'user-diagnostic.txt'
+    marker.parent.mkdir(parents=True); marker.write_text('preserve me')
+    manager = Manager(tmp_path)
+    with pytest.raises(ManagerError, match='signed metadata'):
+        manager.repair()
+    assert marker.read_text() == 'preserve me'
+    assert manager.state() == state
+    assert not (tmp_path / 'preserved').exists()

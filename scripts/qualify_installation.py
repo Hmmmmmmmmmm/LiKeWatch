@@ -172,8 +172,15 @@ def main():
     assert manager.state() == updated
     manager.validate(updated['previous'])
     manager.compatible(updated['previous'], config['data_root'])
+    # Corrupt only a disposable environment completion record, then exercise
+    # recovery using the authenticated offline seed and final-prefix creation.
+    prefix = manager.environments.prefix(manager.state()['active']['environment_id'])
+    (prefix / 'likewatch-environment.json').write_text('{}')
+    manager.repair()
+    assert manager.doctor()['status'] == 'ready'
+    assert any((root / 'preserved').glob('environment-*'))
     report = {'status': 'passed', 'root': str(root), 'seed_commit': original['active']['commit'],
-              'candidate_commit': commit, 'environment_reused': True, 'environment_change_and_rollback': True, 'gui_update_restart': True,
+              'candidate_commit': commit, 'environment_reused': True, 'environment_change_and_rollback': True, 'gui_update_restart': True, 'offline_environment_repair': True,
               'checks': ['signed prepare', 'real spawned OCR validation', 'atomic activation',
                          'healthy Qt close without restart', 'previous source unchanged',
                          'stale plan rejected', 'failed validation leaves deployment unchanged',

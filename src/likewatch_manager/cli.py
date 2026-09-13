@@ -39,20 +39,7 @@ def main(argv=None):
         elif command == 'validate':
             result = manager.validate_plan(target)
         elif command == 'repair':
-            with locked(manager.root / 'state/run.lock'), locked(manager.root / 'state/update.lock'):
-                state = manager.state()
-                source = manager.root / 'releases' / state['active']['commit']
-                try:
-                    manager.check_source(state['active'])
-                except ManagerError:
-                    import uuid
-                    preserved = manager.root / 'preserved' / uuid.uuid4().hex
-                    preserved.parent.mkdir(exist_ok=True)
-                    manager.git.call('--git-dir', manager.git.repo, 'worktree', 'move', source, preserved)
-                    manager.git.stage(state['active']['commit'])
-                manager.environments.check(state['active']['environment_id'])
-                manager.validate(state['active'])
-                result = manager.doctor()
+            result = manager.repair()
         else:
             # Explicit preview only. Automatic deletion is intentionally conservative in protocol 1.
             with locked(manager.root / 'state/run.lock'), locked(manager.root / 'state/update.lock'):

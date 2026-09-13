@@ -175,6 +175,76 @@ class Manager:
         self.check_source(plan['candidate'])
         return plan
 
+    def accepted_manifest(self, deployment):
+        folders = [self.root / 'seed', self.root / 'cache' / deployment['commit']]
+        folders.extend((self.root / 'state/transactions').glob('*'))
+        for folder in folders:
+            if not (folder / 'release-manifest.json').is_file():
+                continue
+            try:
+                manifest, signed_digest = self.manifest(folder, fresh=False)
+                if self.deployment(manifest, signed_digest) == deployment:
+                    return manifest
+            except (ManagerError, OSError, ValueError, KeyError, TypeError):
+                continue
+        raise ManagerError('Accepted signed metadata is unavailable; install a full package at a new prefix')
+
+    def repair(self):
+        from .environments import validate_lock
+        with locked(self.root / 'state/run.lock'), locked(self.root / 'state/update.lock'):
+            state = self.state()
+            active = state['active']
+            manifest = self.accepted_manifest(active)
+            source = self.root / 'releases' / active['commit']
+            try:
+                self.check_source(active)
+            except ManagerError:
+                if source.exists():
+                    preserved = self.root / 'preserved' / ('source-' + uuid.uuid4().hex)
+                    preserved.parent.mkdir(exist_ok=True)
+                    self.git.call('--git-dir', self.git.repo, 'worktree', 'move', source, preserved)
+                else:
+                    self.git.call('--git-dir', self.git.repo, 'worktree', 'prune', '--expire', 'now')
+                self.git.stage(active['commit'])
+            try:
+                self.environments.check(active['environment_id'])
+                self.validate(active)
+            except (OSError, ValueError, KeyError, TypeError, ManagerError):
+                metadata = manifest['platforms'][self.platform]
+                use_seed = False
+                for folder in (self.root / 'seed/payload', self.root / 'cache/environments' / active['environment_id']):
+                    try:
+                        seed_lock = read_json(folder / 'lock.json')
+                        if file_hash(folder / 'lock.json') == metadata['lock_sha256'] and validate_lock(seed_lock) == active['environment_id']:
+                            self.environments.verify_files(folder, seed_lock)
+                            use_seed = True
+                            break
+                    except (OSError, ValueError, KeyError, TypeError, ManagerError):
+                        continue
+                if not use_seed:
+                    folder = self.root / 'cache/repair' / active['environment_id']
+                    folder.mkdir(parents=True, exist_ok=True)
+                    from .trust import REPOSITORY
+                    atomic_json(folder / 'assets.json', {metadata['payload_name']: f"https://github.com/{REPOSITORY}/releases/download/{manifest['tag']}/{metadata['payload_name']}"})
+                    archive = folder / metadata['payload_name']
+                    if not archive.is_file() or file_hash(archive) != metadata['payload_sha256']:
+                        if self.fixture:
+                            raise ManagerError('Fixture repair payload is unavailable')
+                        self.releases.payload(metadata, folder)
+                prefix = self.environments.prefix(active['environment_id'])
+                if prefix.exists():
+                    preserved = self.root / 'preserved' / ('environment-' + uuid.uuid4().hex)
+                    preserved.parent.mkdir(exist_ok=True)
+                    prefix.rename(preserved)
+                if use_seed:
+                    self.environments.install_verified(prefix, folder, seed_lock)
+                else:
+                    self.environments.create(archive, metadata, self.platform)
+                self.validate(active)
+            state['generation'] += 1
+            atomic_json(self.root / 'state/deployment.json', state)
+            return self.doctor()
+
     def doctor(self):
         state = self.state()
         result = {'schema': 1, 'active': state['active'], 'generation': state['generation'], 'signing_configured': bool(self.keys), 'fixture_installation': self.fixture}
@@ -182,6 +252,6 @@ class Manager:
             self.check_source(state['active'])
             self.environments.check(state['active']['environment_id'])
             result['status'] = 'ready'
-        except (OSError, ManagerError) as error:
+        except (OSError, ValueError, KeyError, TypeError, ManagerError) as error:
             result.update(status='repair-required', detail=str(error))
         return result

@@ -18,4 +18,4 @@ Use a local path without spaces; use ASCII characters on Windows. Installed envi
 
 Publication is gated on native Windows and macOS tests, offline installation, generated-launcher OCR tests, and signed update/rollback qualification. Local Apple Silicon testing also exercises real OCR, source updates, failed-candidate preservation, and database preservation.
 
-Camera/screen permission attribution and actual Telegram delivery require hardware/account testing. Cleanup currently previews retained versions. A damaged environment or maintenance-runtime upgrade requires a new installer. Intel Mac builds are not included.
+Camera/screen permission attribution and actual Telegram delivery require hardware/account testing. Cleanup currently previews retained versions. Repair can rebuild damaged environments from authenticated packages. A maintenance-runtime upgrade or missing recovery inputs require a new installer. Intel Mac builds are not included.

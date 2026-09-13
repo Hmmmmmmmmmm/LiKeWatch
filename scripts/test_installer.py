@@ -29,7 +29,7 @@ def main():
     try:
         subprocess.run(command, env=env, check=True, timeout=900)
     except subprocess.CalledProcessError:
-        for log in (prefix / 'install.log', prefix / '.step.log'):
+        for log in [prefix / 'install.log', prefix / '.step.log', *sorted((prefix / 'state/sessions').glob('*/validation.log'))[-5:]]:
             if log.exists():
                 print(log.read_text(errors='replace')[-12000:], flush=True)
         raise
