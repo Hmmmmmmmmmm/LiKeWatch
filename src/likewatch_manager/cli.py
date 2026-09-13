@@ -11,15 +11,23 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='LiKeWatch installation manager')
     parser.add_argument('--root', required=True)
     parser.add_argument('command', nargs='?', default='run', choices=['run','status','doctor','check','prepare','validate','apply','rollback','repair','cleanup'])
-    parser.add_argument('target', nargs='?')
+    parser.add_argument('arguments', nargs=argparse.REMAINDER)
     parser.add_argument('--json', action='store_true')
-    args, extra = parser.parse_known_args(argv)
+    args, unknown = parser.parse_known_args(argv)
+    extra = args.arguments + unknown
+    target = None
+    if args.command != 'run':
+        extra = [value for value in extra if value != '--json']
+        if len(extra) > 1:
+            parser.error('This maintenance command accepts at most one target')
+        target = extra[0] if extra else None
+        extra = []
     try:
         manager = Manager(args.root)
         command = args.command
         if command in ('run', 'apply', 'rollback'):
             from .supervisor import run
-            return run(manager, extra, transaction=args.target if command == 'apply' else None, rollback=command == 'rollback')
+            return run(manager, extra, transaction=target if command == 'apply' else None, rollback=command == 'rollback')
         if command in ('status', 'doctor'):
             result = manager.doctor()
         elif command == 'check':
@@ -27,9 +35,9 @@ def main(argv=None):
             from packaging.version import Version
             result = {'status': 'update-available' if Version(manifest['version']) > Version(manager.state()['active']['version']) else 'up-to-date', 'version': manifest['version'], 'notes': manifest.get('notes', '')}
         elif command == 'prepare':
-            result = manager.prepare(args.target)
+            result = manager.prepare(target)
         elif command == 'validate':
-            result = manager.validate_plan(args.target)
+            result = manager.validate_plan(target)
         elif command == 'repair':
             with locked(manager.root / 'state/run.lock'), locked(manager.root / 'state/update.lock'):
                 state = manager.state()

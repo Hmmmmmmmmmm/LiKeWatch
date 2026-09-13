@@ -54,6 +54,13 @@ jobs:
           import base64, json, os, subprocess
           from pathlib import Path
           from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+          for platform in ('osx-arm64', 'win-64'):
+              artifact = Path('qualified') / ('managed-' + platform)
+              smoke = json.loads((artifact / 'installed-smoke.json').read_text())
+              updates = json.loads((artifact / 'update-qualification.json').read_text())
+              assert smoke['status'] == updates['status'] == 'passed'
+              assert smoke['commit'] == updates['seed_commit'] == os.environ['GITHUB_SHA']
+              assert updates['environment_change_and_rollback'] is True
           raw = base64.b64decode(os.environ['SIGNING_KEY'], validate=True)
           key = Ed25519PrivateKey.from_private_bytes(raw)
           public = base64.b64encode(key.public_key().public_bytes_raw()).decode()

@@ -218,3 +218,13 @@ def test_mismatched_trial_health_never_commits(tmp_path, monkeypatch):
         supervisor.start(manager, {'environment_id': 'b' * 64})
     assert stopped == [42]
     assert not (tmp_path / 'state/deployment.json').exists()
+
+
+def test_launcher_forwards_report_option_without_consuming_its_path(monkeypatch):
+    from likewatch_manager import cli, supervisor
+    sentinel = object()
+    monkeypatch.setattr(cli, 'Manager', lambda root: sentinel)
+    received = []
+    monkeypatch.setattr(supervisor, 'run', lambda manager, arguments, **kwargs: received.append(arguments) or 0)
+    assert cli.main(['--root', '/fixture', 'run', '--self-test', '--ui-stress', '--report', '/tmp/report with spaces.json']) == 0
+    assert received == [['--self-test', '--ui-stress', '--report', '/tmp/report with spaces.json']]
