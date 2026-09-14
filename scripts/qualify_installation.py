@@ -1,0 +1,238 @@
+"""Exercise signed updates and rollback in an explicitly disposable fixture installation.
+
+Run using the installed maintenance interpreter. This never contacts GitHub or
+uses operational credentials. The fixture candidate closes itself through Qt.
+"""
+import argparse
+import copy
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--root', required=True)
+    parser.add_argument('--source', required=True)
+    parser.add_argument('--private-key', required=True)
+    parser.add_argument('--report', required=True)
+    args = parser.parse_args()
+    root = Path(args.root).resolve()
+    sys.path.insert(0, str(root / 'manager'))
+    from likewatch_manager.common import atomic_json, canonical, ManagerError, file_hash, locked
+    from likewatch_manager.deployment import Manager
+    from likewatch_manager.supervisor import run
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    manager = Manager(root)
+    if not manager.fixture:
+        raise RuntimeError('Qualification requires a TEST ONLY installation')
+    work = Path(tempfile.mkdtemp(prefix='likewatch-update-qualification-'))
+    remote = work / 'remote'
+    git = str(root / manager.config['git'])
+    def command(*argv, cwd=work):
+        return subprocess.check_output(list(map(str, argv)), cwd=cwd, text=True).strip()
+    command(git, 'clone', '--no-hardlinks', Path(args.source).resolve(), remote)
+    command(git, 'config', 'user.name', 'LiKeWatch qualification', cwd=remote)
+    command(git, 'config', 'user.email', 'fixture@example.invalid', cwd=remote)
+    # Fixture-only auto-close: exercises healthy Qt shutdown without a production hook.
+    entry = remote / 'src/likewatch/__main__.py'
+    hook = """    from pathlib import Path
+    request = Path(current.data_root) / 'qualification-gui-update'
+    if request.exists():
+        request.unlink()
+        from .updates import UpdatesDialog
+        from .ui import present
+        dialog = UpdatesDialog(window)
+        present(window, dialog)
+        poll = QTimer(window)
+        def finish_update():
+            if dialog.restart.isEnabled():
+                poll.stop()
+                dialog.restart_update()
+        poll.timeout.connect(finish_update)
+        poll.start(100)
+        QTimer.singleShot(0, dialog.prepare_update)
+        QTimer.singleShot(240000, window.close)
+    elif '--qualification-hold' not in sys.argv:
+        QTimer.singleShot(3000, window.close)
+    result = app.exec()
+    import os
+    (Path(current.data_root) / 'qualification-exited').write_text(str(os.getpid()))
+    return result"""
+    entry.write_text(entry.read_text().replace('    return app.exec()', hook))
+    original = manager.state()
+    app = remote / 'deployment/app.toml'
+    base = tomllib.loads(app.read_text())['version']
+    major, minor, patch = map(int, base.split('.'))
+    version, second_version, bad_version = [f'{major}.{minor}.{patch + offset}' for offset in (991, 992, 993)]
+    app.write_text(app.read_text().replace(f'version = "{base}"', f'version = "{version}"'))
+    command(git, 'add', '.', cwd=remote)
+    command(git, 'commit', '-m', 'Local qualification candidate', cwd=remote)
+    commit = command(git, 'rev-parse', 'HEAD', cwd=remote)
+    command(git, 'tag', 'v' + version, cwd=remote)
+    manifest = json.loads((root / 'seed/release-manifest.json').read_text())
+    manifest.update(commit=commit, version=version, tag='v' + version, sequence=original['highest_sequence'] + 1,
+                    issued=int(time.time()) - 10, expires=int(time.time()) + 3600)
+    folder = work / 'signed'; folder.mkdir()
+    key = Ed25519PrivateKey.from_private_bytes(Path(args.private_key).read_bytes())
+    raw = canonical(manifest)
+    (folder / 'release-manifest.json').write_bytes(raw)
+    (folder / 'release-manifest.sig').write_bytes(key.sign(raw))
+    config = manager.config.copy()
+    config.update(remote=str(remote), fixture_release=str(folder), isolated_app=True, data_root=str(work / 'user data 测试'))
+    atomic_json(root / 'manager/config.json', config)
+    manager = Manager(root)
+    plan = manager.prepare()
+    assert plan['candidate']['environment_id'] == original['active']['environment_id']
+    assert manager.state() == original
+    manager.validate_plan(plan['id'])
+    assert manager.state() == original
+    start = time.monotonic()
+    assert run(manager, transaction=plan['id']) == 0
+    assert time.monotonic() - start < 30, 'Healthy exit restarted the GUI'
+    updated = manager.state()
+    assert updated['active']['commit'] == commit and updated['previous'] == original['active']
+    assert updated['generation'] == original['generation'] + 1
+    manager.check_source(original['active'])
+    try:
+        manager.plan(plan['id'])
+    except ManagerError:
+        pass
+    else:
+        raise AssertionError('Stale plan accepted')
+    # Upgrade once more, then roll back to the first auto-closing fixture source.
+    import sqlite3
+    database = Path(config['data_root']) / 'history.sqlite3'
+    with sqlite3.connect(database) as db:
+        db.execute('CREATE TABLE qualification_retained (value TEXT)')
+        db.execute("INSERT INTO qualification_retained VALUES ('history/outbox fixture sentinel')")
+        db.execute("INSERT INTO incidents (id,profile,rule_id,name,activated,acknowledged) VALUES ('fixture-incident','fixture-profile','fixture-rule','Retained incident',?,1)", (time.time(),))
+        db.execute("INSERT INTO events VALUES ('fixture-event','fixture-profile','fixture-incident','TEST',?,'Retained event')", (time.time(),))
+        db.execute("INSERT INTO outbox (event_id,profile,incident,kind,chat,body,state,attempts,created) VALUES ('fixture-event','fixture-profile','fixture-incident','TEST','fixture-chat','Retained pending delivery','pending',2,?)", (time.time(),))
+        db.execute("INSERT INTO telegram_cursor VALUES ('fixture-profile',12345)")
+        retained = {table: db.execute('SELECT * FROM ' + table).fetchall() for table in ('incidents','events','outbox','telegram_cursor')}
+    profile_path = Path(config['data_root']) / 'last-profile.json'
+    retained_profile = json.loads(profile_path.read_text())
+    app.write_text(app.read_text().replace(version, second_version))
+    command(git, 'add', '.', cwd=remote); command(git, 'commit', '-m', 'Second healthy fixture', cwd=remote)
+    second = command(git, 'rev-parse', 'HEAD', cwd=remote)
+    command(git, 'tag', 'v' + second_version, cwd=remote)
+    manifest.update(commit=second, version=second_version, tag='v' + second_version, sequence=manifest['sequence'] + 1)
+    # Repackage identical dependencies with another native resource to exercise
+    # a new environment identity and installation at its final prefix.
+    import shutil, tarfile
+    from likewatch_manager.environments import validate_lock
+    payload = work / 'changed-payload'
+    shutil.copytree(root / 'seed/payload', payload)
+    marker = payload / 'native/qualification-marker'
+    marker.parent.mkdir(exist_ok=True)
+    marker.write_text('Second immutable environment fixture\n')
+    lock = json.loads((payload / 'lock.json').read_text())
+    lock['native'].append({'filename': marker.name, 'sha256': file_hash(marker)})
+    identity = validate_lock(lock)
+    atomic_json(payload / 'lock.json', lock)
+    archive = folder / ('environment-' + identity + '.tar.gz')
+    with tarfile.open(archive, 'w:gz') as bundle:
+        for path in sorted(payload.rglob('*')):
+            if path.is_file():
+                bundle.add(path, arcname=str(path.relative_to(payload)))
+    manifest['platforms'][manager.platform] = {'environment_id': identity, 'lock_sha256': file_hash(payload / 'lock.json'),
+        'payload_name': archive.name, 'payload_sha256': file_hash(archive), 'payload_size': archive.stat().st_size, 'python': '3.13'}
+    raw = canonical(manifest)
+    (folder / 'release-manifest.json').write_bytes(raw); (folder / 'release-manifest.sig').write_bytes(key.sign(raw))
+    (Path(config['data_root']) / 'qualification-gui-update').write_text('Request fixture update through the real GUI adapter')
+    assert run(manager) == 0
+    assert manager.state()['active']['commit'] == second
+    assert manager.state()['active']['environment_id'] == identity
+    assert run(manager, rollback=True) == 0
+    assert manager.state()['active']['commit'] == commit
+    assert manager.state()['active']['environment_id'] == original['active']['environment_id']
+    with sqlite3.connect(database) as db:
+        assert db.execute('SELECT value FROM qualification_retained').fetchone()[0] == 'history/outbox fixture sentinel'
+        for table, rows in retained.items():
+            assert db.execute('SELECT * FROM ' + table).fetchall() == rows, table
+    assert json.loads(profile_path.read_text()) == retained_profile
+    updated = manager.state()
+    # A failed candidate validation must not modify active/previous or consume sequence.
+    bad = remote / 'src/likewatch/selftest.py'
+    bad.write_text('raise RuntimeError("Injected candidate failure")\n')
+    app.write_text(app.read_text().replace(second_version, bad_version))
+    command(git, 'add', '.', cwd=remote); command(git, 'commit', '-m', 'Local failed candidate', cwd=remote)
+    bad_commit = command(git, 'rev-parse', 'HEAD', cwd=remote)
+    command(git, 'tag', 'v' + bad_version, cwd=remote)
+    manifest.update(commit=bad_commit, version=bad_version, tag='v' + bad_version, sequence=manifest['sequence'] + 1)
+    raw = canonical(manifest)
+    (folder / 'release-manifest.json').write_bytes(raw); (folder / 'release-manifest.sig').write_bytes(key.sign(raw))
+    bad_plan = manager.prepare()
+    try:
+        manager.validate_plan(bad_plan['id'])
+    except ManagerError:
+        pass
+    else:
+        raise AssertionError('Failed candidate validated')
+    assert manager.state() == updated
+    manager.validate(updated['previous'])
+    manager.compatible(updated['previous'], config['data_root'])
+    # Kill only the supervisor while its GUI intentionally has no auto-close.
+    # The owned stdin pipe must make the app close cooperatively on both OSes.
+    from likewatch_manager.environments import interpreter
+    existing = set((root / 'state/sessions').iterdir())
+    parent = subprocess.Popen([str(interpreter(root)), '-I', '-B', str(root / 'manager/manager.py'),
+                               '--root', str(root), 'run', '--qualification-hold'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    health = None
+    deadline = time.monotonic() + 60
+    try:
+        while time.monotonic() < deadline:
+            for session in set((root / 'state/sessions').iterdir()) - existing:
+                if (session / 'health.json').is_file():
+                    health = json.loads((session / 'health.json').read_text())
+            if health:
+                break
+            if parent.poll() is not None:
+                raise AssertionError('Qualification supervisor exited before readiness')
+            time.sleep(0.1)
+        assert health, 'Qualification GUI did not become ready'
+        parent.terminate(); parent.wait(timeout=10)
+        exited = Path(config['data_root']) / 'qualification-exited'
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if exited.exists() and exited.read_text() == str(health['pid']):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError('Application remained orphaned after supervisor death')
+    finally:
+        if parent.poll() is None:
+            parent.terminate(); parent.wait(timeout=10)
+    # Corrupt only a disposable environment completion record, then exercise
+    # recovery using the authenticated offline seed and final-prefix creation.
+    prefix = manager.environments.prefix(manager.state()['active']['environment_id'])
+    (prefix / 'likewatch-environment.json').write_text('{}')
+    manager.repair()
+    assert manager.doctor()['status'] == 'ready'
+    assert any((root / 'preserved').glob('environment-*'))
+    from likewatch_manager.retention import cleanup
+    retained_state = manager.state()
+    result = cleanup(manager, apply=True)
+    assert bad_commit in result['sources']
+    assert manager.state() == retained_state
+    assert manager.check_source(retained_state['active']).exists()
+    assert manager.check_source(retained_state['previous']).exists()
+    report = {'status': 'passed', 'root': str(root), 'seed_commit': original['active']['commit'],
+              'candidate_commit': commit, 'environment_reused': True, 'environment_change_and_rollback': True, 'gui_update_restart': True, 'offline_environment_repair': True, 'supervisor_death_closes_app': True, 'retention_cleanup': True,
+              'checks': ['signed prepare', 'real spawned OCR validation', 'atomic activation',
+                         'healthy Qt close without restart', 'previous source unchanged',
+                         'stale plan rejected', 'failed validation leaves deployment unchanged',
+                         'GUI manager process and cooperative restart', 'actual rollback with healthy Qt shutdown', 'profile, history, pending outbox, acknowledgements and polling offsets preserved'],
+              'work': str(work)}
+    atomic_json(args.report, report)
+    print(json.dumps(report))
+
+
+if __name__ == '__main__':
+    main()

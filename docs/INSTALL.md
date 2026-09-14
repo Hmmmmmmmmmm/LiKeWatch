@@ -1,55 +1,26 @@
-# Install LiKeWatch
+# Install the source-managed LiKeWatch
 
-## Windows 10/11 x64
-Download [LiKeWatch-0.2.1-Windows-x64-portable.exe](https://github.com/Hmmmmmmmmmm/LiKeWatch/releases/download/v0.2.1/LiKeWatch-0.2.1-Windows-x64-portable.exe) and double-click it.
-No installer or archive extraction is required. No Python, Tesseract, administrator install, or separate OCR download is
-needed. The single executable extracts its runtime to a temporary folder at
-launch. Profiles/history live in your local application-data directory.
+## Windows x64
 
-The executable is not Authenticode-signed. Windows may show an unknown-publisher
-prompt. Check the release source and SHA-256 before choosing to run it.
+Run the constructor installer and choose a per-user local folder with an ASCII path and no spaces. The Windows installer rejects characters outside the system code page; an ASCII path avoids this limitation. It includes private Python, Git, Qt, and OCR dependencies. Start the installed `RunLiKeWatch.cmd`. Do not move the installation after setup; reinstall at a new prefix if needed. The old v0.2 portable EXE remains a separate legacy distribution.
 
-## macOS 15 or newer, Apple Silicon
-Open `LiKeWatch-0.2.1-macOS-arm64.dmg`, drag LiKeWatch to Applications, then launch.
-This release is locally ad-hoc signed, not Apple Developer ID signed or notarized.
-If macOS blocks it, use System Settings → Privacy & Security → Open Anyway for
-the downloaded application you have verified. Do not disable Gatekeeper globally.
+## macOS 15+ Apple Silicon
 
-Camera access and screen recording need OS permission. Enable LiKeWatch under
-Privacy & Security → Camera and Screen & System Audio Recording as applicable,
-then quit/reopen it. The app does not request camera/screen access in demo mode.
+Run the downloaded shell installer from Terminal:
 
-Keep the installed app in `/Applications` or your local `~/Applications` folder,
-not in a cloud-synced folder. When upgrading, replace the old Applications copy
-and point launchers to the updated app so an older version is not opened by mistake.
+```sh
+bash LiKeWatch-0.3.0-MacOSX-arm64.sh -b -p "$HOME/LiKeWatch"
+"$HOME/LiKeWatch/RunLiKeWatch.command"
+```
 
-## First run
-1. New profiles start with no regions and no rules. Saved profiles are restored.
-   Choose **Snapshot** to freeze the selected source before adding regions.
-2. Choose camera, screen, or Open image. Set the camera/monitor index in Settings.
-3. Take a snapshot, then **+ Region**. Click top-left, top-right, bottom-right,
-   bottom-left. Choose number/text, unit, confidence threshold and preprocessing.
-4. **Edit corners on frozen frame** is enabled by default. Drag the selected region's handles.
-   Use the mouse wheel or the **Zoom** percentage beside **Reset zoom** to magnify
-   beyond fit-to-frame; drag the image to pan. Reset zoom fits the image again.
-   Clicking a variable selects its region with a thicker border at every zoom level.
-5. Add conditions with nested AND/OR groups. Configure consecutive samples and,
-   if required, a separate recovery condition for hysteresis.
-6. Start monitoring. Events remain local until delivery is enabled.
-7. Enter Telegram bot token and chat/topic ID in Settings. Enable desired routes
-   and outbound delivery, then press Test send. Routine data additionally needs
-   a nonzero interval and the DATA route enabled.
+Use the actual downloaded filename. The complete installation path must not contain spaces; the conda maintenance runtime does not support them. Unicode paths without spaces passed local Mac qualification. The setup prepares its private environments, installs bundled wheels offline, verifies source, and runs isolated real-OCR tests before marking installation complete. It does not initialize the user's shell, change system PATH, register a default Python, or activate an unrelated environment.
 
-Tokens are saved in Keychain / Windows Credential Locker. Imported profiles and
-application restarts always disable outbound delivery until explicitly enabled.
-Acknowledge records review; it does not clear an incident. Uncertain delivery
-requires checking Telegram before an explicit retry, which may duplicate a message.
+A script launch does not bypass macOS camera/screen/keychain authorization. Permissions may be attributed differently from the old frozen application. Native hardware and permission qualification is separate from offscreen CI. The authentication helper is precompiled; no Swift compiler is needed by the installed app.
 
-This is an assistive monitoring tool. Qualify OCR on the actual fonts, viewing
-geometry and lighting before relying on its readings. Perspective correction
-cannot restore glare-obscured characters or missing decimal points.
+## Upgrade from v0.2.x
 
-After changing a source or its resolution, existing variables show SOURCE_ERROR.
-Verify placement on the new snapshot, then edit the variable or drag its corners
-to bind it to that source. Re-select regions if the content moved. This prevents
-old camera coordinates from silently becoming readings on another screen.
+Close the old application. Install v0.3 in its own local folder, then use the new stable launcher. Existing application-data paths, profile IDs, QSettings identity (`LiKeWatch` / `LiKeWatch`), keyring service/account names, SQLite history, and Telegram state remain unchanged. Nothing automatically removes the old app or your old launcher. Retire old shortcuts manually to avoid opening the wrong version.
+
+Fresh profiles start empty with corner editing enabled. Choose a source, take a Snapshot, add regions, and trigger OCR. Zoom controls remain beside Reset zoom. Telegram delivery is optional and starts disabled. Existing profiles are restored instead of being replaced by new defaults.
+
+See [Updating](UPDATING.md), [Recovery](RECOVERY.md), and [Deployment architecture](DEPLOYMENT-ARCHITECTURE.md). Qualification results and installer sizes are recorded separately; do not infer Windows or hardware support from a local offscreen Mac test alone.

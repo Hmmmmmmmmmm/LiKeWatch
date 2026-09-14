@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "likewatch"
-version = "0.2.1"
+version = "0.3.0"
 description = "Local camera and screen OCR monitoring with reliable rule-based alerts"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
   "PySide6==6.11.2", "numpy==2.5.3", "opencv-python-headless==5.0.0.93",
   "tesserocr==2.11.0; sys_platform != 'win32'",
@@ -16,6 +16,7 @@ dependencies = [
   "keyring==25.7.0", "platformdirs==4.11.7"
 ]
 [project.optional-dependencies]
+manager = ["cryptography==46.0.5", "packaging==26.3"]
 dev = ["pytest==9.1.1", "pyinstaller==6.22.2"]
 [project.scripts]
 likewatch = "likewatch.__main__:main"

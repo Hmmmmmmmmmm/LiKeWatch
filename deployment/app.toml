@@ -1,0 +1,5 @@
+version = "0.3.0"
+manager_protocol = 1
+profile_read = [1, 1]
+database_read = [0, 1]
+database_write = 1

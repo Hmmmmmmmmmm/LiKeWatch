@@ -38,12 +38,12 @@ def authenticate_windows():
 
 
 def authentication_command():
-    from .ocr import resource_path
+    from .paths import context
     if sys.platform == 'darwin':
-        helper = resource_path('assets', 'native-auth')
+        helper = context().native('native-auth')
         if helper.is_file():
             return [str(helper)]
-        return ['/usr/bin/swift', str(resource_path('assets','authenticate.swift'))]
+        raise RuntimeError('Authentication helper is missing; repair the LiKeWatch installation.')
     return None
 
 from PySide6.QtCore import QThread, Signal
@@ -54,6 +54,10 @@ class Authentication(QThread):
 
     def run(self):
         try:
+            from .paths import context
+            if context().test_mode:
+                self.verified.emit(False)
+                return
             if sys.platform == 'win32':
                 allowed = authenticate_windows()
             else:

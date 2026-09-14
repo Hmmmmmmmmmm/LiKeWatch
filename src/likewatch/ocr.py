@@ -12,9 +12,11 @@ from .domain import Observation, Quality, parse_observation
 from .imaging import rectify, preprocess
 
 
+from .paths import context
+
+
 def resource_path(*parts):
-    root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
-    return root.joinpath(*parts)
+    return context().source(*parts)
 
 
 class TextDetector:
@@ -51,6 +53,8 @@ def _worker(connection):
     detector = None
     try:
         detector = TextDetector()
+        connection.send({'module': str(Path(__file__).resolve()), 'python': sys.executable,
+                         'commit': context().commit, 'environment_id': context().environment_id})
         while True:
             request = connection.recv()
             if request is None:
@@ -95,6 +99,14 @@ class OcrSupervisor:
             )
             self.process.start()
             child.close()
+            if not self.connection.poll(self.timeout):
+                self.close()
+                raise RuntimeError('OCR worker initialization timed out')
+            try:
+                self.identity = self.connection.recv()
+            except EOFError:
+                self.close()
+                raise RuntimeError('OCR worker initialization failed') from None
         try:
             self.connection.send((frame, regions, timestamp, frame_id))
             if not self.connection.poll(self.timeout):
@@ -108,6 +120,12 @@ class OcrSupervisor:
 
     def close(self):
         if self.process:
+            if self.process.is_alive():
+                try:
+                    self.connection.send(None)
+                except (BrokenPipeError, OSError):
+                    pass
+                self.process.join(timeout=2)
             if self.process.is_alive():
                 self.process.terminate()
             self.process.join(timeout=2)

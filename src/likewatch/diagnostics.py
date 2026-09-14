@@ -51,8 +51,10 @@ def prune_logs(directory, days=7):
 
 def initialize(directory=None):
     global _fault_file
+    from .paths import context
     directory = Path(
         directory
+        or context().log_root
         or os.environ.get("LIKEWATCH_LOG_DIR")
         or user_log_dir("LiKeWatch", "LiKeWatch")
     )

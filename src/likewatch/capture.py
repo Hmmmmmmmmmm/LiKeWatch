@@ -56,6 +56,10 @@ class Capture:
         self.device = None
 
     def read(self, profile):
+        from .paths import context
+        if context().test_mode and profile.source != 'demo':
+            raise RuntimeError('Hardware capture disabled during verification')
+
         if profile.source != "camera":
             self.close()
         if profile.source == "demo":

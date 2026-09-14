@@ -657,6 +657,9 @@ class SettingsDialog(QDialog):
             self.autosave()
 
     def autosave(self):
+        # An explicit save also consumes the pending debounced save. Otherwise
+        # that callback changes the revision while a test incident is running.
+        self.save_timer.stop()
         try:
             p=copy.deepcopy(self.profile)
             p.device=self.device.value()
@@ -697,6 +700,9 @@ class SettingsDialog(QDialog):
         if any(task.isRunning() for task in self.owner.auth_tasks):
             self.status.setText("Authentication is already in progress.")
             return
+        if self.owner.runtime_context.test_mode:
+            self.status.setText("Authentication disabled during verification.")
+            return
         from .security import Authentication
         worker=Authentication(self.owner)
         self.owner.auth_tasks.append(worker)
@@ -733,7 +739,7 @@ class SettingsDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, data_dir=None):
+    def __init__(self, data_dir=None, runtime_context=None):
         from .accessibility import install_table_workaround
 
         install_table_workaround()
@@ -741,7 +747,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("LiKeWatch · local OCR monitor")
         self.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
         self.resize(1500, 930)
-        self.data_dir = Path(data_dir or user_data_dir("LiKeWatch", "LiKeWatch"))
+        from .paths import context
+        self.runtime_context = runtime_context or context()
+        self.shutdown = None
+        self.restart_transaction = None
+        self.data_dir = Path(data_dir or self.runtime_context.data_root or user_data_dir("LiKeWatch", "LiKeWatch"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.instance_lock = QLockFile(str(self.data_dir / "instance.lock"))
         self.instance_lock.setStaleLockTime(0)
@@ -764,7 +774,9 @@ class MainWindow(QMainWindow):
         self.revision = 0
         self.auth_tasks = []
         self.alarm_phase = False
-        self.settings = QSettings("LiKeWatch", "LiKeWatch")
+        settings_file = self.runtime_context.settings_file or (self.data_dir / 'settings.ini' if data_dir else None)
+        self.settings = (QSettings(str(settings_file), QSettings.Format.IniFormat) if settings_file
+                         else QSettings("LiKeWatch", "LiKeWatch"))
         self.store = Store(self.data_dir / "history.sqlite3")
         self.worker = MonitorWorker(self.store)
         self.delivery = DeliveryWorker(self.store)
@@ -821,6 +833,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(button("Save profile", self.save_profile))
         toolbar.addWidget(button("Load profile", self.load_profile))
         toolbar.addWidget(button("Settings", self.open_settings))
+        toolbar.addWidget(button("Updates", self.open_updates))
         self.toolbar_controls = [
             toolbar.itemAt(i).widget()
             for i in range(toolbar.count())
@@ -1529,6 +1542,10 @@ class MainWindow(QMainWindow):
             self.image.scene().clear()
         self.invalidate()
 
+    def open_updates(self):
+        from .updates import UpdatesDialog
+        present(self, UpdatesDialog(self))
+
     def open_settings(self):
         present(self, SettingsDialog(self.profile, self))
 
@@ -1598,6 +1615,8 @@ class MainWindow(QMainWindow):
                 self.events.setItem(i, j, item)
 
     def alarm_tick(self):
+        if self.runtime_context.test_mode or self.runtime_context.transaction:
+            return
         pending = self.store.pending_alarms(self.profile.id) if self.profile.local_alarm else []
         self.alarm_phase = not self.alarm_phase if pending else False
         self.ack_button.setStyleSheet("background:#dc2626;color:white;font-weight:bold;" if self.alarm_phase else "")
@@ -1669,14 +1688,26 @@ class MainWindow(QMainWindow):
         self.age_timer.stop()
         self.alarm_timer.stop()
         self.settings.setValue("splitter", self.splitter.saveState())
-        self.worker.stopping.set()
-        self.delivery.stopping.set()
+        self.settings.sync()
         self.delivery.profile_id = None
-        self.banner.setText("Finishing background work…")
-        if not self.worker.wait(100) or not self.delivery.wait(100):
+        if self.shutdown is None:
+            from .lifecycle import Shutdown
+            self.shutdown = Shutdown({'monitor/OCR': self.worker, 'Telegram delivery': self.delivery})
+        pending = self.shutdown.pending()
+        if pending:
+            self.banner.setText("Finishing background work: " + ', '.join(pending))
             event.ignore()
-            QTimer.singleShot(250, self.close)
+            if self.shutdown.expired:
+                self.restart_transaction = None
+                self.banner.setText("Close/update blocked by " + ', '.join(pending) + ". Update not applied; retry Close when it finishes.")
+            else:
+                QTimer.singleShot(100, self.close)
             return
         save(self.profile, self.data_dir / "last-profile.json")
+        if self.restart_transaction:
+            from .updates import write_restart_request
+            write_restart_request(self.runtime_context, self.restart_transaction)
         self.instance_lock.unlock()
         event.accept()
+        if self.restart_transaction:
+            QApplication.instance().exit(75)

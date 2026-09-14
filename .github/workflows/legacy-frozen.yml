@@ -1,0 +1,76 @@
+name: Legacy frozen build (manual only)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows-x64
+          - os: macos-15
+            name: macOS-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install native dependencies
+        run: python -m pip install ".[dev,manager]"
+      - name: Unit and integration tests
+        run: python -m pytest -q
+      - name: Native application and embedded OCR smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python scripts/build.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: LiKeWatch-${{ matrix.name }}
+          path: |
+            dist/LiKeWatch-*.exe
+            dist/LiKeWatch-*.dmg
+            dist/*.sha256
+            dist/native-smoke.json
+          if-no-files-found: error
+  windows-portability:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: LiKeWatch-Windows-x64
+          path: download
+      - name: Run downloaded EXE without external runtime configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifact = Get-ChildItem download/LiKeWatch-*-Windows-x64-portable.exe
+          if (@($artifact).Count -ne 1) { throw 'Expected one portable EXE' }
+          $expected = (Get-Content ($artifact.FullName + '.sha256')).Split(' ')[0]
+          if ((Get-FileHash $artifact.FullName -Algorithm SHA256).Hash -ne $expected) { throw 'Checksum mismatch' }
+          $portableDir = Join-Path $env:RUNNER_TEMP 'Portable app 测试'
+          New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+          $executable = Join-Path $portableDir $artifact.Name
+          Copy-Item $artifact.FullName $executable
+          $report = Join-Path $portableDir 'portability-smoke.json'
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          'PYTHONHOME', 'PYTHONPATH', 'TESSDATA_PREFIX', 'TESSERACT_CMD', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH' | ForEach-Object {
+            Remove-Item "Env:$_" -ErrorAction SilentlyContinue
+          }
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          $process = Start-Process -FilePath $executable -ArgumentList '--self-test', '--ui-stress', '--report', "`"$report`"" -WorkingDirectory $portableDir -PassThru
+          if (-not $process.WaitForExit(180000)) { $process.Kill(); throw 'Portable smoke test timed out' }
+          if ($process.ExitCode -ne 0) { throw "Portable EXE failed: $($process.ExitCode)" }
+          $result = Get-Content $report -Raw | ConvertFrom-Json
+          if ($result.status -ne 'passed' -or $result.gui -ne 'passed' -or ($result.values -join ',') -ne '83.2,18.4') { throw 'Portable OCR/GUI check failed' }
+          Copy-Item $report download/portability-smoke.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Windows-portability-report
+          path: download/portability-smoke.json
+          if-no-files-found: error
