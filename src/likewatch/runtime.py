@@ -75,10 +75,14 @@ class MonitorWorker(QThread):
                             regions = [r for r in profile.regions
                                        if r.source_key == profile.source_key() and r.source_size == [w, h]]
                             attachment = incident_snapshot(frame, regions)
-                        self.store.enqueue(
-                            profile, "TEST", "LiKeWatch test incident", incident=uid(),
-                            attachment=attachment,
-                        )
+                        with self.commit_guard:
+                            # Capture/rendering may outlive Stop or a profile change.
+                            if self.stopping.is_set() or revision != self.revision:
+                                continue
+                            self.store.enqueue(
+                                profile, "TEST", "LiKeWatch test incident", incident=uid(),
+                                attachment=attachment,
+                            )
                     elif action in ("capture", "ocr"):
                         if action == "ocr":
                             frame, timestamp = payload
@@ -108,7 +112,7 @@ class MonitorWorker(QThread):
                                     self.frame_id,
                                 )
                         with self.commit_guard:
-                            if revision != self.revision:
+                            if self.stopping.is_set() or revision != self.revision:
                                 continue
                             if action == "ocr":
                                 phases = {

@@ -110,6 +110,48 @@ def test_condition_editor_accepts_imported_leaf(app):
     editor.deleteLater()
 
 
+@pytest.mark.parametrize("action", ["capture", "ocr"])
+def test_shutdown_discards_inflight_ocr(app, tmp_path, monkeypatch, action):
+    entered, release = threading.Event(), threading.Event()
+
+    class Slow(FakeOcr):
+        def analyze(self, *args):
+            entered.set()
+            assert release.wait(3), "OCR was not released"
+            return super().analyze(*args)
+
+    monkeypatch.setattr("likewatch.runtime.OcrSupervisor", Slow)
+    monkeypatch.setattr("likewatch.runtime.Capture.read", lambda *_: demo_frame())
+    store = Store(tmp_path / "db")
+    profile = demo_profile()
+    profile.rules[0].confirm = 1
+    profile.data_interval = 1
+    profile.delivery_enabled = profile.local_alarm = True
+    profile.chat_id = "fixture-only"
+    worker = MonitorWorker(store)
+    results, errors = [], []
+    worker.result.connect(results.append)
+    worker.error.connect(lambda *args: errors.append(args))
+    worker.start()
+    try:
+        payload = (demo_frame(), time.time()) if action == "ocr" else None
+        assert worker.submit((0, profile, action, payload))
+        assert entered.wait(2)
+        worker.stopping.set()
+        release.set()
+        assert worker.wait(5000)
+        app.processEvents()
+        assert not errors and not results
+        assert not store.active(profile.id)
+        assert not store.history(profile.id)
+        assert not store.pending_alarms(profile.id)
+        assert store.claim(profile.id) is None
+    finally:
+        release.set()
+        worker.stopping.set()
+        assert worker.wait(5000)
+
+
 @pytest.mark.parametrize('attach,use_preview', [(False,False),(True,False),(True,True)])
 def test_destination_incident_snapshot_and_history(app, tmp_path, monkeypatch, attach, use_preview):
     monkeypatch.setattr('likewatch.runtime.OcrSupervisor', FakeOcr)
@@ -150,3 +192,64 @@ def test_snapshot_test_failure_does_not_silently_send_text(app,tmp_path,monkeypa
         assert 'Capture unavailable' in errors[0][1]
     finally:
         worker.stopping.set();assert worker.wait(5000)
+
+
+@pytest.mark.parametrize("cancel", ["revision", "shutdown"])
+@pytest.mark.parametrize("stage", ["capture", "snapshot", "preview"])
+def test_test_incident_discards_cancelled_preparation(app, tmp_path, monkeypatch, cancel, stage):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def pause():
+        entered.set()
+        assert release.wait(3), "Preparation was not released"
+
+    def capture(*_):
+        if stage == "capture":
+            pause()
+        return demo_frame()
+
+    def snapshot(*_):
+        if stage != "capture":
+            pause()
+        return b"test-snapshot"
+
+    monkeypatch.setattr("likewatch.runtime.OcrSupervisor", FakeOcr)
+    monkeypatch.setattr("likewatch.runtime.Capture.read", capture)
+    monkeypatch.setattr("likewatch.runtime.incident_snapshot", snapshot)
+    store = Store(tmp_path / "db")
+    profile = demo_profile()
+    profile.attach_snapshot = profile.delivery_enabled = profile.local_alarm = True
+    profile.chat_id = "123"
+    worker = MonitorWorker(store)
+    history, errors = [], []
+    worker.history.connect(lambda *args: history.append(args))
+    worker.error.connect(lambda *args: errors.append(args))
+    worker.start()
+    try:
+        payload = demo_frame() if stage == "preview" else None
+        assert worker.submit((0, profile, "test", payload))
+        assert entered.wait(2)
+        if cancel == "revision":
+            with worker.commit_guard:
+                worker.revision = 1
+        else:
+            worker.stopping.set()
+        release.set()
+        if cancel == "revision":
+            # A current history job proves the old job finished without using shutdown
+            # to cancel it; the revision check must work independently.
+            assert worker.submit((1, profile, "history", None))
+            wait_for(app, lambda: any(revision == 1 for revision, _ in history))
+        else:
+            assert worker.wait(5000)
+            app.processEvents()
+        assert not errors
+        assert not store.history(profile.id)
+        assert not store.pending_alarms(profile.id)
+        assert store.claim(profile.id) is None
+        assert all(revision == 1 for revision, _ in history)
+    finally:
+        release.set()
+        worker.stopping.set()
+        assert worker.wait(5000)
